@@ -1,0 +1,6 @@
+{
+  "name": "Sara Quiz",
+  "description": "Plataforma de Quiz Técnico e Educacional organizada por Qualificações Profissionais com Chat Global, Rankings por área e progressão técnica.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
