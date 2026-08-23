@@ -7,7 +7,7 @@ export type Qualification =
   | 'Ensino Geral'
   | 'Informática & Tecnologia';
 
-export type Difficulty = 'Fácil' | 'Médio' | 'Difícil' | 'Especial';
+export type Difficulty = 'Fácil' | 'Médio' | 'Difícil' | 'Extremamente Difícil' | 'Especial';
 
 export type GameMode =
   | 'classico'
@@ -37,9 +37,9 @@ export interface Question {
   qualification: Qualification;
   subcategory: string;
   difficulty: Difficulty;
-  points: number; // 5 to 20 for Fácil, 21 to 50 for Médio, 51 to 100 for Difícil
+  points: number; // 5-10 Fácil, 11-30 Médio, 31-60 Difícil, 61-100 Extremamente Difícil
   explanation: string;
-  time_limit: number; // in seconds
+  time_limit: number; // in seconds (20s standard)
   active: boolean;
   created_at: string;
   scientist_law?: ScientistLawInfo;
@@ -132,6 +132,11 @@ export interface ChatMessage {
   report_count: number;
   report_reasons?: string[];
   is_system?: boolean;
+  reply_to?: {
+    id: string;
+    user_name: string;
+    message: string;
+  };
 }
 
 export interface ModerationReport {

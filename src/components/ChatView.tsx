@@ -16,7 +16,8 @@ import {
   Smile,
   Search,
   MoreVertical,
-  X
+  X,
+  Reply
 } from 'lucide-react';
 
 interface ChatViewProps {
@@ -30,6 +31,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
   const [inputMessage, setInputMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [cooldown, setCooldown] = useState(0);
+  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
 
   // Private chat peer selection
   const [selectedPeerId, setSelectedPeerId] = useState<string>('user-eletro-mestre');
@@ -42,6 +44,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
   const [reportSuccess, setReportSuccess] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   // List of other players for private chat
   const AVAILABLE_PEERS = [
@@ -58,8 +61,15 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
   const loadGlobalMessages = async () => {
     try {
       const messages = await SupabaseDB.getGlobalMessages();
-      if (messages) {
-        setGlobalMessages(messages);
+      if (messages && messages.length > 0) {
+        setGlobalMessages((prev) => {
+          const map = new Map<string, ChatMessage>();
+          prev.forEach((m) => map.set(m.id, m));
+          messages.forEach((m) => map.set(m.id, m));
+          return Array.from(map.values()).sort(
+            (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+          );
+        });
       }
     } catch (err) {
       console.error('Error fetching global chat from Supabase:', err);
@@ -147,6 +157,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
 
     setIsSending(true);
 
+    const replyPayload = replyingTo
+      ? {
+          id: replyingTo.id,
+          user_name: replyingTo.user_name,
+          message: replyingTo.message,
+        }
+      : undefined;
+
     try {
       if (activeTab === 'global') {
         const newMsg = await SupabaseDB.sendGlobalMessage({
@@ -155,9 +173,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
           user_avatar: user.avatar,
           user_qualification: user.qualification_interest || 'Eletricidade Industrial',
           message: inputMessage.trim(),
+          reply_to: replyPayload,
         });
         setGlobalMessages((prev) => [...prev, newMsg]);
         setInputMessage('');
+        setReplyingTo(null);
         setCooldown(3); // 3 seconds anti-spam cooldown
       } else {
         const newPriv = await SupabaseDB.sendPrivateMessage({
@@ -167,9 +187,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
           recipient_id: selectedPeerId,
           recipient_name: selectedPeerName,
           message: inputMessage.trim(),
+          reply_to: replyPayload,
         });
         setPrivateMessages((prev) => [...prev, newPriv]);
         setInputMessage('');
+        setReplyingTo(null);
       }
     } catch (err) {
       console.error('Error sending message to Supabase:', err);
@@ -377,29 +399,66 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
                             : 'bg-slate-800 border border-slate-700/80 text-slate-100 rounded-tl-none'
                         }`}
                       >
-                        {msg.message}
+                        {/* Render Quoted Reply if message was a response */}
+                        {msg.reply_to && (
+                          <div
+                            className={`mb-2 px-2.5 py-1.5 rounded-xl text-[11px] border-l-2 ${
+                              isMe
+                                ? 'bg-amber-600/25 border-slate-950 text-slate-950'
+                                : 'bg-slate-900/80 border-amber-400 text-slate-300'
+                            }`}
+                          >
+                            <div className="font-bold flex items-center gap-1 text-[10px] opacity-90">
+                              <Reply className="w-2.5 h-2.5" />
+                              <span>{msg.reply_to.user_name}</span>
+                            </div>
+                            <p className="truncate line-clamp-1 opacity-80 italic">
+                              "{msg.reply_to.message}"
+                            </p>
+                          </div>
+                        )}
+
+                        <div>{msg.message}</div>
                       </div>
 
-                      {/* Action buttons (Report / Block) on hover for other users */}
-                      {!isMe && (
-                        <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2 mt-1 px-1 text-[10px] text-slate-500">
-                          <button
-                            onClick={() => setReportingTarget(msg)}
-                            className="hover:text-rose-400 flex items-center gap-1 cursor-pointer"
-                          >
-                            <Flag className="w-3 h-3" />
-                            <span>Denunciar</span>
-                          </button>
-                          <span>•</span>
-                          <button
-                            onClick={() => handleBlockUser(msg.user_id)}
-                            className="hover:text-amber-400 flex items-center gap-1 cursor-pointer"
-                          >
-                            <Ban className="w-3 h-3" />
-                            <span>Bloquear</span>
-                          </button>
-                        </div>
-                      )}
+                      {/* Action buttons (Reply / Report / Block) */}
+                      <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2 mt-1 px-1 text-[10px] text-slate-500">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setReplyingTo(msg);
+                            inputRef.current?.focus();
+                          }}
+                          className="hover:text-amber-400 flex items-center gap-1 cursor-pointer transition-colors"
+                          title="Responder a esta mensagem"
+                        >
+                          <Reply className="w-3 h-3" />
+                          <span>Responder</span>
+                        </button>
+
+                        {!isMe && (
+                          <>
+                            <span>•</span>
+                            <button
+                              type="button"
+                              onClick={() => setReportingTarget(msg)}
+                              className="hover:text-rose-400 flex items-center gap-1 cursor-pointer transition-colors"
+                            >
+                              <Flag className="w-3 h-3" />
+                              <span>Denunciar</span>
+                            </button>
+                            <span>•</span>
+                            <button
+                              type="button"
+                              onClick={() => handleBlockUser(msg.user_id)}
+                              className="hover:text-amber-400 flex items-center gap-1 cursor-pointer transition-colors"
+                            >
+                              <Ban className="w-3 h-3" />
+                              <span>Bloquear</span>
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
@@ -408,16 +467,41 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
             <div ref={messagesEndRef} />
           </div>
 
+          {/* Active Reply Banner */}
+          {replyingTo && (
+            <div className="px-4 py-2 bg-slate-900 border-t border-amber-500/30 flex items-center justify-between text-xs text-amber-300 animate-fadeIn">
+              <div className="flex items-center gap-2 truncate">
+                <Reply className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span className="text-slate-400">Respondendo a</span>
+                <strong className="text-amber-300 truncate">@{replyingTo.user_name}:</strong>
+                <span className="text-slate-300 truncate max-w-[220px] sm:max-w-md italic">
+                  "{replyingTo.message}"
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReplyingTo(null)}
+                className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 cursor-pointer transition-colors shrink-0"
+                title="Cancelar resposta"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
           {/* Chat Input Form */}
           <form
             onSubmit={handleSendMessage}
             className="p-3 sm:p-4 border-t border-slate-800 bg-slate-950/80 flex items-center gap-2 sm:gap-3"
           >
             <input
+              ref={inputRef}
               type="text"
               placeholder={
                 cooldown > 0
                   ? `Aguarde ${cooldown}s para enviar outra mensagem...`
+                  : replyingTo
+                  ? `Respondendo a @${replyingTo.user_name}...`
                   : activeTab === 'global'
                   ? 'Digite sua mensagem no Chat Global...'
                   : `Mensagem privada para ${selectedPeerName}...`

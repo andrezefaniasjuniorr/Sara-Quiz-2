@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { Qualification, GameMode, UserProfile } from './types';
-import { QUALIFICATIONS_LIST } from './data/qualifications';
 import { Header } from './components/Header';
 import { Footer } from './components/Footer';
 import { QualificationPicker } from './components/QualificationPicker';
@@ -35,6 +34,7 @@ export function App() {
   });
 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(!user);
+  const [authInitialTab, setAuthInitialTab] = useState<'register' | 'login'>('register');
 
   // Keep localStorage in sync with user state
   useEffect(() => {
@@ -74,6 +74,11 @@ export function App() {
     return () => clearInterval(interval);
   }, []);
 
+  const handleOpenAuth = (tab: 'register' | 'login' = 'register') => {
+    setAuthInitialTab(tab);
+    setIsAuthModalOpen(true);
+  };
+
   const handleLoginSuccess = (authenticatedUser: UserProfile) => {
     setUser(authenticatedUser);
     setIsAuthModalOpen(false);
@@ -84,6 +89,7 @@ export function App() {
 
   const handleLogout = () => {
     setUser(null);
+    setAuthInitialTab('login');
     setIsAuthModalOpen(true);
     setCurrentTab('qualifications');
   };
@@ -146,7 +152,7 @@ export function App() {
     setCurrentTab('modes');
   };
 
-  // Render dummy empty shell while auth modal is active and no user
+  // Render fallback shell while auth modal is active and no user
   const effectiveUser: UserProfile = user || {
     id: 'guest',
     name: 'Convidado',
@@ -166,13 +172,20 @@ export function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-amber-500 selection:text-slate-950">
+    <div className="min-h-screen bg-slate-950 bg-tech-grid bg-radial-ambient text-slate-100 flex flex-col font-sans relative overflow-x-hidden selection:bg-amber-500 selection:text-slate-950">
       
-      {/* Auth Modal Gate for unregistered / non-logged in users */}
+      {/* Interactive Ambient Glows */}
+      <div className="fixed top-0 left-1/4 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl pointer-events-none -z-10 animate-pulseGlow"></div>
+      <div className="fixed bottom-10 right-10 w-96 h-96 bg-blue-500/5 rounded-full blur-3xl pointer-events-none -z-10 animate-pulseGlow"></div>
+
+      {/* Auth Modal */}
       <AuthModal
+        key={authInitialTab}
         isOpen={isAuthModalOpen || !user}
         onLoginSuccess={handleLoginSuccess}
-        canDismiss={false}
+        canDismiss={!!user}
+        onClose={() => setIsAuthModalOpen(false)}
+        initialTab={authInitialTab}
       />
 
       {/* Top Header */}
@@ -182,10 +195,11 @@ export function App() {
         selectedQualification={selectedQualification}
         user={effectiveUser}
         onlinePlayersCount={onlineCount}
+        onOpenAuth={handleOpenAuth}
       />
 
       {/* Main Content Area */}
-      <main className="flex-1">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6">
         {currentTab === 'qualifications' && (
           <QualificationPicker
             onSelectQualification={handleSelectQualification}

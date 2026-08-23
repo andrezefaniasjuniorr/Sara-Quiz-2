@@ -7,14 +7,13 @@ import {
   Phone, 
   Lock, 
   Calendar, 
-  Sparkles, 
   ArrowRight, 
   CheckCircle2, 
   AlertCircle,
-  Zap,
+  UserPlus,
+  LogIn,
   ShieldCheck,
-  Award,
-  Wallet
+  X
 } from 'lucide-react';
 
 interface AuthModalProps {
@@ -22,6 +21,7 @@ interface AuthModalProps {
   onLoginSuccess: (user: UserProfile) => void;
   onClose?: () => void;
   canDismiss?: boolean;
+  initialTab?: 'register' | 'login';
 }
 
 const AVATAR_LIST = ['👨‍🎓', '👩‍🎓', '👨‍🔧', '👩‍🔧', '👷‍♂️', '👩‍💼', '🧑‍💼', '👨‍💻', '👩‍🏫', '⚙️', '⚡', '🧠'];
@@ -31,8 +31,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onLoginSuccess,
   onClose,
   canDismiss = false,
+  initialTab = 'register',
 }) => {
-  const [tab, setTab] = useState<'register' | 'login'>('register');
+  const [tab, setTab] = useState<'register' | 'login'>(initialTab);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -130,66 +131,80 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fadeIn">
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl relative my-8">
+    <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fadeIn">
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-8 max-w-lg w-full shadow-2xl relative my-auto max-h-[94vh] overflow-y-auto">
         
+        {canDismiss && onClose && (
+          <button
+            onClick={onClose}
+            className="absolute top-4 right-4 text-slate-400 hover:text-white p-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 transition-all cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
+
         {/* Header Branding */}
-        <div className="text-center mb-6">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-amber-500 via-orange-500 to-yellow-400 flex items-center justify-center shadow-lg shadow-amber-500/20 text-slate-950 font-black text-2xl mx-auto mb-3">
+        <div className="text-center mb-5">
+          <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-gradient-to-tr from-amber-500 via-orange-500 to-yellow-400 flex items-center justify-center shadow-lg shadow-amber-500/20 text-slate-950 font-black text-xl sm:text-2xl mx-auto mb-2.5">
             SQ
           </div>
-          <h2 className="text-2xl sm:text-3xl font-black text-white">
-            Bem-vindo ao <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-orange-400">Sara Quiz</span>
+          <h2 className="text-xl sm:text-3xl font-black text-white">
+            Sara <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-orange-400">Quiz</span>
           </h2>
           <p className="text-xs sm:text-sm text-slate-400 mt-1">
-            Plataforma oficial de qualificação técnica, pontuação e recompensas em Meticais (MT).
+            Qualificação técnica e pontuação em Meticais (MT)
           </p>
         </div>
 
-        {/* Tab Switcher */}
-        <div className="flex rounded-2xl bg-slate-950 p-1 mb-6 border border-slate-800">
+        {/* Prominent Tab Switcher (Visible on Mobile & Desktop) */}
+        <div className="grid grid-cols-2 gap-1.5 p-1.5 rounded-2xl bg-slate-950 border border-slate-800 mb-5 shadow-inner">
           <button
+            id="tab-btn-criar-conta"
             type="button"
             onClick={() => {
               setTab('register');
               setErrorMsg(null);
               setSuccessMsg(null);
             }}
-            className={`flex-1 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+            className={`py-2.5 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
               tab === 'register'
-                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                : 'text-slate-400 hover:text-slate-200'
+                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/25 font-black'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
             }`}
           >
-            Criar Nova Conta
+            <UserPlus className="w-4 h-4" />
+            <span>Criar Conta</span>
           </button>
+
           <button
+            id="tab-btn-iniciar-sessao"
             type="button"
             onClick={() => {
               setTab('login');
               setErrorMsg(null);
               setSuccessMsg(null);
             }}
-            className={`flex-1 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+            className={`py-2.5 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
               tab === 'login'
-                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                : 'text-slate-400 hover:text-slate-200'
+                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/25 font-black'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
             }`}
           >
-            Entrar (Já Tenho Conta)
+            <LogIn className="w-4 h-4" />
+            <span>Iniciar Sessão</span>
           </button>
         </div>
 
         {/* Messages */}
         {errorMsg && (
-          <div className="mb-5 p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-semibold flex items-start gap-2.5">
+          <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-semibold flex items-start gap-2 animate-fadeIn">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>{errorMsg}</span>
           </div>
         )}
 
         {successMsg && (
-          <div className="mb-5 p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-semibold flex items-center gap-2.5">
+          <div className="mb-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-semibold flex items-center gap-2 animate-fadeIn">
             <CheckCircle2 className="w-4 h-4 shrink-0" />
             <span>{successMsg}</span>
           </div>
@@ -197,7 +212,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
         {/* 1. REGISTRATION FORM */}
         {tab === 'register' && (
-          <form onSubmit={handleRegister} className="space-y-4">
+          <form onSubmit={handleRegister} className="space-y-3.5">
             
             {/* Nome Completo */}
             <div>
@@ -212,7 +227,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   placeholder="Ex: André Zefanias Júnior"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none transition-all"
+                  className="w-full pl-10 pr-4 py-2.5 bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-xl text-xs sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none transition-all"
                 />
               </div>
             </div>
@@ -231,7 +246,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     placeholder="Ex: 844131370"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none transition-all"
+                    className="w-full pl-10 pr-4 py-2.5 bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-xl text-xs sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none transition-all"
                   />
                 </div>
               </div>
@@ -250,7 +265,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     placeholder="Ex: 22"
                     value={age}
                     onChange={(e) => setAge(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none transition-all"
+                    className="w-full pl-10 pr-4 py-2.5 bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-xl text-xs sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none transition-all"
                   />
                 </div>
               </div>
@@ -270,7 +285,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     placeholder="Mínimo 4 dígitos"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none transition-all"
+                    className="w-full pl-10 pr-4 py-2.5 bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-xl text-xs sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none transition-all"
                   />
                 </div>
               </div>
@@ -287,7 +302,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     placeholder="Repita a palavra-passe"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none transition-all"
+                    className="w-full pl-10 pr-4 py-2.5 bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-xl text-xs sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none transition-all"
                   />
                 </div>
               </div>
@@ -334,24 +349,30 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </div>
             </div>
 
-            <p className="text-[11px] text-slate-500 leading-tight">
-              🔒 Cadastro único e rigoroso: Cada número de celular só pode ser registrado uma única vez. Seus dados e pontos ficam salvos com segurança.
-            </p>
-
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-sm transition-all shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 mt-2"
+              className="w-full py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-sm transition-all shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 mt-2"
             >
               {loading ? (
                 <div className="w-5 h-5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
               ) : (
                 <>
-                  <span>Criar Conta & Começar a Jogar</span>
+                  <span>Criar Conta & Começar</span>
                   <ArrowRight className="w-4 h-4" />
                 </>
               )}
             </button>
+
+            <div className="text-center pt-2">
+              <button
+                type="button"
+                onClick={() => setTab('login')}
+                className="text-xs text-slate-400 hover:text-amber-400 font-semibold cursor-pointer"
+              >
+                Já tem uma conta cadastrada? <strong className="text-amber-400 underline">Iniciar Sessão</strong>
+              </button>
+            </div>
           </form>
         )}
 
@@ -411,9 +432,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <button
                 type="button"
                 onClick={() => setTab('register')}
-                className="text-xs text-amber-400 hover:text-amber-300 font-semibold cursor-pointer"
+                className="text-xs text-slate-400 hover:text-amber-400 font-semibold cursor-pointer"
               >
-                Ainda não tem uma conta? Crie aqui em 30 segundos
+                Ainda não tem conta? <strong className="text-amber-400 underline">Criar Conta em 30 segundos</strong>
               </button>
             </div>
           </form>

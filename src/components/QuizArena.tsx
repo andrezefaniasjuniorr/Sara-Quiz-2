@@ -44,7 +44,7 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
   const [loading, setLoading] = useState(true);
   const [selectedOption, setSelectedOption] = useState<'a' | 'b' | 'c' | 'd' | 'skipped' | null>(null);
   const [isAnswered, setIsAnswered] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(25);
+  const [timeLeft, setTimeLeft] = useState(20);
   const [totalQuestionsCount, setTotalQuestionsCount] = useState(10);
   
   // Game session metrics
@@ -54,12 +54,12 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
   const [sessionWrongCount, setSessionWrongCount] = useState(0);
   const [sessionPenaltyTotalMt, setSessionPenaltyTotalMt] = useState(0);
   const [sessionPenaltyTotalPts, setSessionPenaltyTotalPts] = useState(0);
-  const [lastPenaltyInfo, setLastPenaltyInfo] = useState<{ mt: number; pts: number } | null>(null);
+  const [lastPenaltyInfo, setLastPenaltyInfo] = useState<{ mt: number; pts: number; oldPts?: number; newPts?: number } | null>(null);
+  const [lastRewardInfo, setLastRewardInfo] = useState<{ pts: number; oldPts?: number; newPts?: number } | null>(null);
   const [sessionStreak, setSessionStreak] = useState(user.current_streak || 0);
   const [highestSessionStreak, setHighestSessionStreak] = useState(user.current_streak || 0);
   const [isGameOver, setIsGameOver] = useState(false);
-  const [allAnsweredBefore, setAllAnsweredBefore] = useState(false);
-  const [skipFeedback, setSkipFeedback] = useState(false);
+  const [skipFeedback, setSkipFeedback] = useState<{ pts: number; oldPts?: number; newPts?: number } | null>(null);
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const startTimeRef = useRef<number>(Date.now());
@@ -67,7 +67,8 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
   const getPenaltyForDifficulty = (diff: string) => {
     if (diff === 'Fácil') return { mt: 5, pts: 10 };
     if (diff === 'Médio') return { mt: 10, pts: 20 };
-    return { mt: 20, pts: 40 }; // Difícil or Especial
+    if (diff === 'Difícil') return { mt: 20, pts: 40 };
+    return { mt: 30, pts: 60 }; // Extremamente Difícil or Especial
   };
 
   // Fetch Questions for Qualification directly from database
@@ -104,11 +105,11 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
 
   const currentQuestion = questions[currentIndex];
 
-  // Start question timer
+  // Start question timer (standard 20 seconds)
   useEffect(() => {
     if (!currentQuestion || isAnswered || isGameOver || loading) return;
 
-    const baseLimit = mode === 'resposta_rapida' ? 15 : currentQuestion.time_limit || 25;
+    const baseLimit = mode === 'resposta_rapida' ? 12 : currentQuestion.time_limit || 20;
     setTimeLeft(baseLimit);
     startTimeRef.current = Date.now();
 
@@ -164,26 +165,33 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
     submitAnswer(opt);
   };
 
-  // Skip Question Handler (-5 Points Penalty)
+  // Skip Question Handler: Deduct exactly 2 points (-2 pts / 1 MT)
   const handleSkipQuestion = async () => {
     if (isAnswered || !currentQuestion) return;
     if (timerRef.current) clearInterval(timerRef.current);
 
+    const prevTotal = user.total_points || 0;
+    const newTotal = prevTotal - 2;
+
     setSelectedOption('skipped');
     setIsAnswered(true);
-    setSkipFeedback(true);
+    setSkipFeedback({ pts: 2, oldPts: prevTotal, newPts: newTotal });
+    setLastPenaltyInfo(null);
+    setLastRewardInfo(null);
     setSessionSkippedCount((prev) => prev + 1);
     setSessionStreak(0);
-    setSessionScore((prev) => prev - 5);
+    // Deduct 2 points from session score
+    setSessionScore((prev) => prev - 2);
 
     try {
       const { user_stats } = await SupabaseAuthService.recordAnswer({
         user_id: user.id,
+        current_user_points: prevTotal,
         question_id: currentQuestion.id,
         qualification: qualification,
         selected_answer: 'skipped',
         correct: false,
-        points_earned: -5,
+        points_earned: -2, // Exactly 2 points deduction
         time_taken_seconds: Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000)),
       });
       if (user_stats && onAnswerRecorded) {
@@ -201,8 +209,8 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
     setIsAnswered(true);
     const isCorrect = selected === currentQuestion.correct_answer;
     const timeTaken = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
+    const prevTotal = user.total_points || 0;
 
-    // Base point range (5-20 Fácil, 21-50 Médio, 51-100 Difícil)
     let earnedPoints = 0;
     let newStreak = sessionStreak;
     const penalty = getPenaltyForDifficulty(currentQuestion.difficulty);
@@ -212,22 +220,28 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
       setSessionStreak(newStreak);
       if (newStreak > highestSessionStreak) setHighestSessionStreak(newStreak);
 
-      const streakBonus = Math.min(10, Math.floor(newStreak * 1.5));
-      const speedBonus = timeLeft > 12 ? 5 : 0;
-      earnedPoints = currentQuestion.points + streakBonus + speedBonus;
+      // Question points directly credited to user's total balance
+      earnedPoints = currentQuestion.points;
+      const newTotal = prevTotal + earnedPoints;
 
       setSessionScore((prev) => prev + earnedPoints);
       setSessionCorrectCount((prev) => prev + 1);
+      setLastRewardInfo({ pts: earnedPoints, oldPts: prevTotal, newPts: newTotal });
       setLastPenaltyInfo(null);
+      setSkipFeedback(null);
     } else {
       newStreak = 0;
       setSessionStreak(0);
 
-      // PENALTY TAX ON WRONG ANSWER (5 to 20 MT / 10 to 40 Points)
+      // CUMULATIVE REDUCTION: Deduct penalty points from existing balance (e.g. 100 pts - 10 pts = 90 pts)
+      const newTotal = prevTotal - penalty.pts;
+
       setSessionPenaltyTotalMt((prev) => prev + penalty.mt);
       setSessionPenaltyTotalPts((prev) => prev + penalty.pts);
       setSessionWrongCount((prev) => prev + 1);
-      setLastPenaltyInfo({ mt: penalty.mt, pts: penalty.pts });
+      setLastPenaltyInfo({ mt: penalty.mt, pts: penalty.pts, oldPts: prevTotal, newPts: newTotal });
+      setLastRewardInfo(null);
+      setSkipFeedback(null);
       setSessionScore((prev) => prev - penalty.pts);
 
       if (mode === 'sequencia') {
@@ -238,9 +252,10 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
     }
 
     try {
-      // 100% Native Supabase Answer Recording with Negative Balance deduction
+      // 100% Native Supabase Answer Recording with cumulative addition/reduction
       const { user_stats } = await SupabaseAuthService.recordAnswer({
         user_id: user.id,
+        current_user_points: prevTotal,
         question_id: currentQuestion.id,
         qualification: qualification,
         selected_answer: selected,
@@ -258,8 +273,9 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
   };
 
   const handleNextQuestion = () => {
-    setSkipFeedback(false);
+    setSkipFeedback(null);
     setLastPenaltyInfo(null);
+    setLastRewardInfo(null);
     if (mode === 'sequencia' && selectedOption !== currentQuestion?.correct_answer && selectedOption !== 'skipped') {
       setIsGameOver(true);
       return;
@@ -285,9 +301,10 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
     setSessionPenaltyTotalMt(0);
     setSessionPenaltyTotalPts(0);
     setLastPenaltyInfo(null);
+    setLastRewardInfo(null);
     setSessionStreak(0);
     setIsGameOver(false);
-    setSkipFeedback(false);
+    setSkipFeedback(null);
   };
 
   // 1. Loading State
@@ -374,7 +391,7 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
             </div>
 
             <div className="bg-slate-950 border border-slate-800 p-3 sm:p-4 rounded-2xl col-span-2 sm:col-span-1">
-              <span className="text-xs text-slate-400 block font-medium">Puladas (-5 pts)</span>
+              <span className="text-xs text-slate-400 block font-medium">Puladas (-2 pts)</span>
               <span className="text-xl sm:text-2xl font-black text-blue-400 font-mono">{sessionSkippedCount}</span>
             </div>
           </div>
@@ -449,12 +466,14 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
         {/* Difficulty Badge & Scientist Pill */}
         <div className="flex flex-wrap items-center justify-between gap-1.5 mb-2.5 sm:mb-4">
           <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-            <span className={`text-[10px] sm:text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+            <span className={`text-[10px] sm:text-[11px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full border ${
               currentQuestion.difficulty === 'Fácil' 
                 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
                 : currentQuestion.difficulty === 'Médio'
+                ? 'bg-sky-500/10 text-sky-400 border-sky-500/30'
+                : currentQuestion.difficulty === 'Difícil'
                 ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-                : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                : 'bg-purple-500/10 text-purple-300 border-purple-500/30'
             }`}>
               {currentQuestion.difficulty} (+{currentQuestion.points} pts)
             </span>
@@ -462,7 +481,7 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
             {/* Error penalty indicator */}
             <span className="text-[10px] sm:text-[11px] font-bold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-500/25 flex items-center gap-1">
               <AlertTriangle className="w-3 h-3 text-rose-400" />
-              <span>Taxa Erro: -{getPenaltyForDifficulty(currentQuestion.difficulty).mt} MT (-{getPenaltyForDifficulty(currentQuestion.difficulty).pts} pts)</span>
+              <span>Taxa Erro: -{getPenaltyForDifficulty(currentQuestion.difficulty).pts} pts (-{getPenaltyForDifficulty(currentQuestion.difficulty).mt} MT)</span>
             </span>
           </div>
 
@@ -480,9 +499,41 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
 
         {/* Skip Question Alert Notice */}
         {skipFeedback && (
-          <div className="mb-3 p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-300 text-xs font-bold flex items-center gap-2 animate-fadeIn">
-            <FastForward className="w-3.5 h-3.5 text-blue-400" />
-            <span>Questão pulada. Penalidade de -5 pontos aplicada.</span>
+          <div className="mb-3 p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-300 text-xs font-bold flex items-center justify-between gap-2 animate-fadeIn shadow-lg shadow-blue-950/20">
+            <div className="flex items-center gap-1.5">
+              <FastForward className="w-4 h-4 text-blue-400 shrink-0" />
+              <span>
+                Questão pulada! Taxa de <strong className="text-white underline">-2 pts (-1 MT)</strong> aplicada
+                {skipFeedback.oldPts !== undefined && (
+                  <span className="text-blue-200 ml-1 font-mono">
+                    (Saldo: {skipFeedback.oldPts} pts ➔ {skipFeedback.newPts} pts)
+                  </span>
+                )}.
+              </span>
+            </div>
+            <span className="text-[10px] sm:text-xs px-2 py-0.5 rounded-lg bg-blue-500/20 border border-blue-500/40 text-blue-300 font-mono font-black shrink-0">
+              -2 pts
+            </span>
+          </div>
+        )}
+
+        {/* Reward Feedback Alert on Correct Answer */}
+        {lastRewardInfo && (
+          <div className="mb-3 p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-200 text-xs font-bold flex items-center justify-between gap-2 animate-fadeIn shadow-lg shadow-emerald-950/20">
+            <div className="flex items-center gap-1.5">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span className="text-[11px] sm:text-xs">
+                Resposta correta! Recompensa de <strong className="text-white underline">+{lastRewardInfo.pts} pts (+{Math.round(lastRewardInfo.pts / 2)} MT)</strong> adicionada ao seu saldo
+                {lastRewardInfo.oldPts !== undefined && (
+                  <span className="text-emerald-300 ml-1 font-mono font-black">
+                    ({lastRewardInfo.oldPts} pts ➔ {lastRewardInfo.newPts} pts)
+                  </span>
+                )}.
+              </span>
+            </div>
+            <span className="text-[10px] sm:text-xs px-2 py-0.5 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-mono font-black shrink-0">
+              +{lastRewardInfo.pts} pts
+            </span>
           </div>
         )}
 
@@ -492,11 +543,16 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
             <div className="flex items-center gap-1.5">
               <XCircle className="w-4 h-4 text-rose-400 shrink-0" />
               <span className="text-[11px] sm:text-xs">
-                {selectedOption === 'timeout' ? 'Tempo esgotado!' : 'Incorreta!'} Penalidade de <strong className="text-white underline">-{lastPenaltyInfo.mt} MT (-{lastPenaltyInfo.pts} pts)</strong> debitada.
+                {selectedOption === 'timeout' ? 'Tempo esgotado!' : 'Resposta incorreta!'} Penalidade de <strong className="text-white underline">-{lastPenaltyInfo.pts} pts (-{lastPenaltyInfo.mt} MT)</strong> debitada do saldo
+                {lastPenaltyInfo.oldPts !== undefined && (
+                  <span className="text-rose-300 ml-1 font-mono font-black">
+                    ({lastPenaltyInfo.oldPts} pts ➔ {lastPenaltyInfo.newPts} pts)
+                  </span>
+                )}.
               </span>
             </div>
             <span className="text-[10px] sm:text-xs px-2 py-0.5 rounded-lg bg-rose-500/20 border border-rose-500/40 text-rose-300 font-mono font-black shrink-0">
-              -{lastPenaltyInfo.mt} MT
+              -{lastPenaltyInfo.pts} pts
             </span>
           </div>
         )}
@@ -566,14 +622,14 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
         {/* Action Controls: Skip Question & Next */}
         <div className="mt-3 sm:mt-5 pt-3 sm:pt-4 border-t border-slate-800 flex items-center justify-between gap-2">
           
-          {/* Skip Button (-5 pts penalty) */}
+          {/* Skip Button (-2 pts penalty) */}
           {!isAnswered ? (
             <button
               onClick={handleSkipQuestion}
-              className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white border border-slate-700 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 hover:text-white border border-slate-700 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
             >
               <FastForward className="w-3.5 h-3.5 text-amber-400" />
-              <span>Pular (-5 pts)</span>
+              <span>Pular Questão (-2 pts)</span>
             </button>
           ) : (
             <div className="text-[11px] text-slate-400 hidden sm:block">

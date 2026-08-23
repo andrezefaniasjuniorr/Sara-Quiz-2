@@ -460,11 +460,12 @@ export const SupabaseAuthService = {
 
   /**
    * Record answer result directly to Supabase
-   * Supports negative score updates (e.g. 0 - 5 = -5)
+   * Supports negative and positive cumulative score updates (e.g. 100 + 40 = 140, 100 - 10 = 90, 100 - 2 = 98)
    * Updates public.profiles and public.users immediately
    */
   async recordAnswer(payload: {
     user_id: string;
+    current_user_points?: number;
     question_id: string;
     qualification: string;
     selected_answer: string;
@@ -491,13 +492,31 @@ export const SupabaseAuthService = {
       console.warn('Answered questions insert warning:', e);
     }
 
-    // 2. Fetch current points from profiles or users
-    let total_points = 0;
+    // 2. Fetch current points from base, profiles or users
+    let total_points = typeof payload.current_user_points === 'number' ? payload.current_user_points : 0;
     let total_answered = 0;
     let total_correct = 0;
     let total_skipped = 0;
     let current_streak = 0;
     let best_streak = 0;
+
+    // Check localStorage cache
+    try {
+      const savedAuth = localStorage.getItem('sara_quiz_auth_user');
+      if (savedAuth) {
+        const parsed = JSON.parse(savedAuth);
+        if (parsed.id === payload.user_id) {
+          if (typeof payload.current_user_points !== 'number' && typeof parsed.total_points === 'number') {
+            total_points = parsed.total_points;
+          }
+          total_answered = Number(parsed.total_answered) || 0;
+          total_correct = Number(parsed.total_correct) || 0;
+          total_skipped = Number(parsed.total_skipped) || 0;
+          current_streak = Number(parsed.current_streak) || 0;
+          best_streak = Number(parsed.best_streak) || 0;
+        }
+      }
+    } catch {}
 
     try {
       const { data: profRow } = await supabase
@@ -507,12 +526,14 @@ export const SupabaseAuthService = {
         .maybeSingle();
 
       if (profRow) {
-        total_points = profRow.pontos !== undefined ? Number(profRow.pontos) : Number(profRow.total_points) || 0;
-        total_answered = Number(profRow.total_answered) || 0;
-        total_correct = Number(profRow.total_correct) || 0;
-        total_skipped = Number(profRow.total_skipped) || 0;
-        current_streak = Number(profRow.current_streak) || 0;
-        best_streak = Number(profRow.best_streak) || 0;
+        if (typeof payload.current_user_points !== 'number') {
+          total_points = profRow.pontos !== undefined ? Number(profRow.pontos) : Number(profRow.total_points) || 0;
+        }
+        total_answered = Math.max(total_answered, Number(profRow.total_answered) || 0);
+        total_correct = Math.max(total_correct, Number(profRow.total_correct) || 0);
+        total_skipped = Math.max(total_skipped, Number(profRow.total_skipped) || 0);
+        current_streak = Math.max(current_streak, Number(profRow.current_streak) || 0);
+        best_streak = Math.max(best_streak, Number(profRow.best_streak) || 0);
       } else {
         const { data: userRow } = await supabase
           .from('users')
@@ -521,12 +542,14 @@ export const SupabaseAuthService = {
           .maybeSingle();
 
         if (userRow) {
-          total_points = Number(userRow.total_points) || 0;
-          total_answered = Number(userRow.total_answered) || 0;
-          total_correct = Number(userRow.total_correct) || 0;
-          total_skipped = Number(userRow.total_skipped) || 0;
-          current_streak = Number(userRow.current_streak) || 0;
-          best_streak = Number(userRow.best_streak) || 0;
+          if (typeof payload.current_user_points !== 'number') {
+            total_points = Number(userRow.total_points) || 0;
+          }
+          total_answered = Math.max(total_answered, Number(userRow.total_answered) || 0);
+          total_correct = Math.max(total_correct, Number(userRow.total_correct) || 0);
+          total_skipped = Math.max(total_skipped, Number(userRow.total_skipped) || 0);
+          current_streak = Math.max(current_streak, Number(userRow.current_streak) || 0);
+          best_streak = Math.max(best_streak, Number(userRow.best_streak) || 0);
         }
       }
     } catch (err) {
@@ -535,19 +558,25 @@ export const SupabaseAuthService = {
 
     total_answered += 1;
 
+    // Mathematical Cumulative Operation:
     if (payload.correct) {
       total_correct += 1;
       current_streak += 1;
       if (current_streak > best_streak) best_streak = current_streak;
-      total_points += payload.points_earned;
+      // ADD POINTS CUMULATIVELY: e.g. 100 + 40 = 140
+      total_points = total_points + Math.abs(payload.points_earned);
     } else {
       current_streak = 0;
       if (payload.selected_answer === 'skipped') {
         total_skipped += 1;
+        // Skip penalty: exactly 2 points (e.g. 100 - 2 = 98)
+        const skipPenalty = payload.points_earned ? Math.abs(payload.points_earned) : 2;
+        total_points = total_points - skipPenalty;
+      } else {
+        // Wrong answer penalty: reduce from current total points (e.g. 100 - 10 = 90)
+        const penalty = payload.points_earned ? Math.abs(payload.points_earned) : 10;
+        total_points = total_points - penalty;
       }
-      // SUBTRACT POINTS: ALLOW NEGATIVE SCORE (e.g. 0 - 5 = -5)
-      const penalty = payload.points_earned < 0 ? payload.points_earned : -5;
-      total_points = total_points + penalty;
     }
 
     const nowStr = new Date().toISOString();
@@ -811,32 +840,49 @@ export const SupabaseDB = {
 
   /**
    * Get Global Chat Messages directly from Supabase (messages / chat_messages)
+   * With persistent local cache merge to guarantee zero disappearing messages
    */
   async getGlobalMessages(): Promise<ChatMessage[]> {
+    let localSaved: ChatMessage[] = [];
+    try {
+      const raw = localStorage.getItem('sara_quiz_global_chat_history');
+      if (raw) localSaved = JSON.parse(raw);
+    } catch {}
+
+    const fetchedMap = new Map<string, ChatMessage>();
+    // First populate with local messages
+    localSaved.forEach((m) => fetchedMap.set(m.id, m));
+
     try {
       // Try chat_messages
       const { data, error } = await supabase
         .from('chat_messages')
         .select('*')
-        .or('channel.eq.global,channel.is.null')
-        .order('timestamp', { ascending: true })
+        .order('created_at', { ascending: true })
         .limit(100);
 
       if (!error && data && data.length > 0) {
-        return data.map((d: any) => ({
-          id: d.id,
-          user_id: d.sender_id || d.user_id,
-          user_name: d.sender_name || d.user_name || 'Jogador',
-          user_avatar: d.sender_avatar || d.user_avatar || '👨‍🎓',
-          user_qualification: d.user_qualification || 'Eletricidade Industrial',
-          message: d.content || d.message || '',
-          created_at: d.timestamp || d.created_at || new Date().toISOString(),
-          reported: Boolean(d.reported),
-          report_count: Number(d.report_count) || 0,
-        }));
+        data.forEach((d: any) => {
+          fetchedMap.set(d.id, {
+            id: d.id,
+            user_id: d.sender_id || d.user_id,
+            user_name: d.sender_name || d.user_name || 'Jogador',
+            user_avatar: d.sender_avatar || d.user_avatar || '👨‍🎓',
+            user_qualification: (d.user_qualification || 'Eletricidade Industrial') as Qualification,
+            message: d.content || d.message || '',
+            created_at: d.created_at || d.timestamp || new Date().toISOString(),
+            reported: Boolean(d.reported),
+            report_count: Number(d.report_count) || 0,
+            reply_to: d.reply_to || (d.reply_to_user_name ? {
+              id: d.reply_to_id || '',
+              user_name: d.reply_to_user_name,
+              message: d.reply_to_message || '',
+            } : undefined),
+          });
+        });
       }
 
-      // Try messages
+      // Try messages table as well
       const { data: msgData, error: msgError } = await supabase
         .from('messages')
         .select('*')
@@ -844,35 +890,67 @@ export const SupabaseDB = {
         .limit(100);
 
       if (!msgError && msgData && msgData.length > 0) {
-        return msgData.map((d: any) => ({
-          id: d.id,
-          user_id: d.user_id || d.sender_id,
-          user_name: d.user_name || d.sender_name || 'Jogador',
-          user_avatar: d.user_avatar || d.sender_avatar || '👨‍🎓',
-          user_qualification: d.user_qualification || 'Eletricidade Industrial',
-          message: d.message || d.content || '',
-          created_at: d.created_at || d.timestamp || new Date().toISOString(),
-          reported: Boolean(d.reported),
-          report_count: Number(d.report_count) || 0,
-        }));
+        msgData.forEach((d: any) => {
+          if (!fetchedMap.has(d.id)) {
+            fetchedMap.set(d.id, {
+              id: d.id,
+              user_id: d.user_id || d.sender_id,
+              user_name: d.user_name || d.sender_name || 'Jogador',
+              user_avatar: d.user_avatar || d.sender_avatar || '👨‍🎓',
+              user_qualification: (d.user_qualification || 'Eletricidade Industrial') as Qualification,
+              message: d.message || d.content || '',
+              created_at: d.created_at || d.timestamp || new Date().toISOString(),
+              reported: Boolean(d.reported),
+              report_count: Number(d.report_count) || 0,
+              reply_to: d.reply_to || (d.reply_to_user_name ? {
+                id: d.reply_to_id || '',
+                user_name: d.reply_to_user_name,
+                message: d.reply_to_message || '',
+              } : undefined),
+            });
+          }
+        });
       }
 
-      return [
+      if (fetchedMap.size === 0) {
+        fetchedMap.set('init-msg-1', {
+          id: 'init-msg-1',
+          user_id: 'sys-sara',
+          user_name: 'Sara (Tutora IA)',
+          user_avatar: '👩‍🏫',
+          user_qualification: 'Ensino Geral',
+          message: 'Bem-vindo ao Sara Quiz! Tire dúvidas técnicas, responda a mensagens de colegas e desafie a comunidade em tempo real.',
+          created_at: new Date(Date.now() - 3600000).toISOString(),
+          reported: false,
+          report_count: 0,
+          is_system: true,
+        });
+      }
+
+      const mergedList = Array.from(fetchedMap.values()).sort(
+        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      );
+
+      try {
+        localStorage.setItem('sara_quiz_global_chat_history', JSON.stringify(mergedList.slice(-100)));
+      } catch {}
+
+      return mergedList;
+    } catch {
+      return localSaved.length > 0 ? localSaved : [
         {
           id: 'init-msg-1',
           user_id: 'sys-sara',
           user_name: 'Sara (Tutora IA)',
           user_avatar: '👩‍🏫',
           user_qualification: 'Ensino Geral',
-          message: 'Bem-vindo ao Sara Quiz! Tire dúvidas técnicas e desafie colegas em tempo real.',
+          message: 'Bem-vindo ao Sara Quiz! Tire dúvidas técnicas, responda a mensagens de colegas e desafie a comunidade em tempo real.',
           created_at: new Date(Date.now() - 3600000).toISOString(),
           reported: false,
           report_count: 0,
           is_system: true,
         },
       ];
-    } catch {
-      return [];
     }
   },
 
@@ -885,6 +963,11 @@ export const SupabaseDB = {
     user_avatar: string;
     user_qualification: string;
     message: string;
+    reply_to?: {
+      id: string;
+      user_name: string;
+      message: string;
+    };
   }): Promise<ChatMessage> {
     const newMessage: ChatMessage = {
       id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -893,10 +976,19 @@ export const SupabaseDB = {
       user_avatar: msg.user_avatar,
       user_qualification: msg.user_qualification as Qualification,
       message: msg.message,
+      reply_to: msg.reply_to,
       created_at: new Date().toISOString(),
       reported: false,
       report_count: 0,
     };
+
+    // Save to local cache immediately to prevent disappearing
+    try {
+      const raw = localStorage.getItem('sara_quiz_global_chat_history');
+      const list: ChatMessage[] = raw ? JSON.parse(raw) : [];
+      list.push(newMessage);
+      localStorage.setItem('sara_quiz_global_chat_history', JSON.stringify(list.slice(-100)));
+    } catch {}
 
     // Insert into chat_messages
     try {
@@ -904,17 +996,25 @@ export const SupabaseDB = {
         {
           id: newMessage.id,
           sender_id: newMessage.user_id,
+          user_id: newMessage.user_id,
           sender_name: newMessage.user_name,
+          user_name: newMessage.user_name,
           sender_avatar: newMessage.user_avatar,
+          user_avatar: newMessage.user_avatar,
           user_qualification: newMessage.user_qualification,
           content: newMessage.message,
           message: newMessage.message,
           channel: 'global',
+          reply_to: newMessage.reply_to ? JSON.stringify(newMessage.reply_to) : null,
+          reply_to_user_name: newMessage.reply_to?.user_name || null,
+          reply_to_message: newMessage.reply_to?.message || null,
           timestamp: newMessage.created_at,
           created_at: newMessage.created_at,
         },
       ]);
-    } catch {}
+    } catch (err) {
+      console.warn('chat_messages insert note:', err);
+    }
 
     // Also insert into messages table if present
     try {
@@ -926,6 +1026,7 @@ export const SupabaseDB = {
           user_avatar: newMessage.user_avatar,
           user_qualification: newMessage.user_qualification,
           message: newMessage.message,
+          reply_to: newMessage.reply_to ? JSON.stringify(newMessage.reply_to) : null,
           created_at: newMessage.created_at,
         },
       ]);
@@ -956,6 +1057,11 @@ export const SupabaseDB = {
         recipient_id: d.recipient_id,
         recipient_name: d.recipient_name,
         message: d.content || d.message || '',
+        reply_to: d.reply_to || (d.reply_to_user_name ? {
+          id: d.reply_to_id || '',
+          user_name: d.reply_to_user_name,
+          message: d.reply_to_message || '',
+        } : undefined),
         created_at: d.timestamp || d.created_at || new Date().toISOString(),
         reported: Boolean(d.reported),
         report_count: Number(d.report_count) || 0,
@@ -975,6 +1081,11 @@ export const SupabaseDB = {
     recipient_id: string;
     recipient_name: string;
     message: string;
+    reply_to?: {
+      id: string;
+      user_name: string;
+      message: string;
+    };
   }): Promise<ChatMessage> {
     const newPrivateMessage: ChatMessage = {
       id: `pmsg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -984,24 +1095,31 @@ export const SupabaseDB = {
       recipient_id: msg.recipient_id,
       recipient_name: msg.recipient_name,
       message: msg.message,
+      reply_to: msg.reply_to,
       created_at: new Date().toISOString(),
       reported: false,
       report_count: 0,
     };
 
-    await supabase.from('chat_messages').insert([
-      {
-        id: newPrivateMessage.id,
-        sender_id: newPrivateMessage.user_id,
-        sender_name: newPrivateMessage.user_name,
-        sender_avatar: newPrivateMessage.user_avatar,
-        content: newPrivateMessage.message,
-        channel: 'private',
-        recipient_id: msg.recipient_id,
-        recipient_name: msg.recipient_name,
-        timestamp: newPrivateMessage.created_at,
-      },
-    ]);
+    try {
+      await supabase.from('chat_messages').insert([
+        {
+          id: newPrivateMessage.id,
+          sender_id: newPrivateMessage.user_id,
+          sender_name: newPrivateMessage.user_name,
+          sender_avatar: newPrivateMessage.user_avatar,
+          recipient_id: newPrivateMessage.recipient_id,
+          recipient_name: newPrivateMessage.recipient_name,
+          content: newPrivateMessage.message,
+          message: newPrivateMessage.message,
+          channel: 'private',
+          reply_to: newPrivateMessage.reply_to ? JSON.stringify(newPrivateMessage.reply_to) : null,
+          timestamp: newPrivateMessage.created_at,
+          created_at: newPrivateMessage.created_at,
+        },
+      ]);
+    } catch {}
+
     return newPrivateMessage;
   },
 
