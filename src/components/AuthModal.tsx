@@ -228,7 +228,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   <input
                     type="tel"
                     required
-                    placeholder="Ex: 841234567"
+                    placeholder="Ex: 844131370"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     className="w-full pl-10 pr-4 py-2.5 bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none transition-all"
@@ -367,7 +367,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <input
                   type="tel"
                   required
-                  placeholder="Ex: 841234567"
+                  placeholder="Ex: 844131370"
                   value={loginPhone}
                   onChange={(e) => setLoginPhone(e.target.value)}
                   className="w-full pl-10 pr-4 py-3 bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none transition-all"

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Qualification, LeaderboardEntry } from '../types';
 import { QUALIFICATIONS_LIST } from '../data/qualifications';
+import { SupabaseDB } from '../lib/supabase';
 import { Trophy, Medal, Flame, Zap, Award, User, Search } from 'lucide-react';
 
 interface LeaderboardViewProps {
@@ -21,12 +22,10 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
     async function fetchLeaderboard() {
       setLoading(true);
       try {
-        const query = selectedFilter === 'Global' ? '' : `?qualification=${encodeURIComponent(selectedFilter)}`;
-        const res = await fetch(`/api/rankings${query}`);
-        const data = await res.json();
-        setLeaderboard(data.leaderboard || []);
+        const data = await SupabaseDB.getRankings(selectedFilter);
+        setLeaderboard(data || []);
       } catch (err) {
-        console.error('Error fetching leaderboard:', err);
+        console.error('Error fetching leaderboard from Supabase:', err);
       } finally {
         setLoading(false);
       }

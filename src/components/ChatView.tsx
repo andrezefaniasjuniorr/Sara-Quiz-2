@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ChatMessage, UserProfile, Qualification } from '../types';
 import { QUALIFICATIONS_LIST } from '../data/qualifications';
+import { SupabaseDB } from '../lib/supabase';
 import { 
   MessageSquare, 
   Send, 
@@ -36,7 +37,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
   const [selectedPeerAvatar, setSelectedPeerAvatar] = useState<string>('👨‍🔧');
 
   // Reporting modal
-  const [reportingMsgId, setReportingMsgId] = useState<string | null>(null);
+  const [reportingTarget, setReportingTarget] = useState<ChatMessage | null>(null);
   const [reportReason, setReportReason] = useState('Spam / Mensagem Repetitiva');
   const [reportSuccess, setReportSuccess] = useState(false);
 
@@ -56,13 +57,12 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
   // Load Global Chat Messages
   const loadGlobalMessages = async () => {
     try {
-      const res = await fetch(`/api/chat/global?user_id=${user.id}`);
-      const data = await res.json();
-      if (data.messages) {
-        setGlobalMessages(data.messages);
+      const messages = await SupabaseDB.getGlobalMessages();
+      if (messages) {
+        setGlobalMessages(messages);
       }
     } catch (err) {
-      console.error('Error fetching global chat:', err);
+      console.error('Error fetching global chat from Supabase:', err);
     }
   };
 
@@ -70,13 +70,12 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
   const loadPrivateMessages = async () => {
     if (!selectedPeerId) return;
     try {
-      const res = await fetch(`/api/chat/private/${user.id}/${selectedPeerId}`);
-      const data = await res.json();
-      if (data.messages) {
-        setPrivateMessages(data.messages);
+      const messages = await SupabaseDB.getPrivateMessages(user.id, selectedPeerId);
+      if (messages) {
+        setPrivateMessages(messages);
       }
     } catch (err) {
-      console.error('Error fetching private chat:', err);
+      console.error('Error fetching private chat from Supabase:', err);
     }
   };
 
@@ -115,87 +114,60 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
 
     try {
       if (activeTab === 'global') {
-        const res = await fetch('/api/chat/global', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            user_id: user.id,
-            user_name: user.name,
-            user_avatar: user.avatar,
-            user_qualification: user.qualification_interest || 'Eletricidade Industrial',
-            message: inputMessage.trim(),
-          }),
+        const newMsg = await SupabaseDB.sendGlobalMessage({
+          user_id: user.id,
+          user_name: user.name,
+          user_avatar: user.avatar,
+          user_qualification: user.qualification_interest || 'Eletricidade Industrial',
+          message: inputMessage.trim(),
         });
-        const data = await res.json();
-        if (data.success) {
-          setGlobalMessages((prev) => [...prev, data.message]);
-          setInputMessage('');
-          setCooldown(3); // 3 seconds anti-spam cooldown
-        }
+        setGlobalMessages((prev) => [...prev, newMsg]);
+        setInputMessage('');
+        setCooldown(3); // 3 seconds anti-spam cooldown
       } else {
-        const res = await fetch('/api/chat/private', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            user_id: user.id,
-            user_name: user.name,
-            user_avatar: user.avatar,
-            user_qualification: user.qualification_interest,
-            recipient_id: selectedPeerId,
-            recipient_name: selectedPeerName,
-            message: inputMessage.trim(),
-          }),
+        const newPriv = await SupabaseDB.sendPrivateMessage({
+          sender_id: user.id,
+          sender_name: user.name,
+          sender_avatar: user.avatar,
+          recipient_id: selectedPeerId,
+          recipient_name: selectedPeerName,
+          message: inputMessage.trim(),
         });
-        const data = await res.json();
-        if (data.success) {
-          setPrivateMessages((prev) => [...prev, data.message]);
-          setInputMessage('');
-        }
+        setPrivateMessages((prev) => [...prev, newPriv]);
+        setInputMessage('');
       }
     } catch (err) {
-      console.error('Error sending message:', err);
+      console.error('Error sending message to Supabase:', err);
     } finally {
       setIsSending(false);
     }
   };
 
   const handleReportMessage = async () => {
-    if (!reportingMsgId) return;
+    if (!reportingTarget) return;
 
     try {
-      await fetch('/api/chat/report', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message_id: reportingMsgId,
-          reported_by_user_id: user.id,
-          reason: reportReason,
-        }),
+      await SupabaseDB.reportModeration({
+        message_id: reportingTarget.id,
+        message_content: reportingTarget.message || '',
+        reported_user_id: reportingTarget.user_id || '',
+        reported_user_name: reportingTarget.user_name || 'Usuário',
+        reporting_user_id: user.id,
+        reason: reportReason,
       });
       setReportSuccess(true);
       setTimeout(() => {
-        setReportingMsgId(null);
+        setReportingTarget(null);
         setReportSuccess(false);
       }, 1500);
     } catch (err) {
-      console.error('Error reporting:', err);
+      console.error('Error reporting message to Supabase:', err);
     }
   };
 
   const handleBlockUser = async (targetUserId: string) => {
-    try {
-      await fetch('/api/chat/block', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: user.id,
-          block_user_id: targetUserId,
-        }),
-      });
-      setGlobalMessages((prev) => prev.filter((m) => m.user_id !== targetUserId));
-    } catch (err) {
-      console.error('Error blocking user:', err);
-    }
+    setGlobalMessages((prev) => prev.filter((m) => m.user_id !== targetUserId));
+    setPrivateMessages((prev) => prev.filter((m) => m.user_id !== targetUserId));
   };
 
   return (
@@ -377,7 +349,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
                       {!isMe && (
                         <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2 mt-1 px-1 text-[10px] text-slate-500">
                           <button
-                            onClick={() => setReportingMsgId(msg.id)}
+                            onClick={() => setReportingTarget(msg)}
                             className="hover:text-rose-400 flex items-center gap-1 cursor-pointer"
                           >
                             <Flag className="w-3 h-3" />
@@ -436,7 +408,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
       </div>
 
       {/* Moderation Report Modal Dialog */}
-      {reportingMsgId && (
+      {reportingTarget && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
           <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-md w-full shadow-2xl">
             <div className="flex items-center justify-between mb-4">
@@ -445,7 +417,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
                 <span>Denunciar Mensagem</span>
               </div>
               <button
-                onClick={() => setReportingMsgId(null)}
+                onClick={() => setReportingTarget(null)}
                 className="text-slate-400 hover:text-white cursor-pointer"
               >
                 <X className="w-5 h-5" />
@@ -487,7 +459,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
                 <div className="flex justify-end gap-2">
                   <button
                     type="button"
-                    onClick={() => setReportingMsgId(null)}
+                    onClick={() => setReportingTarget(null)}
                     className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer"
                   >
                     Cancelar

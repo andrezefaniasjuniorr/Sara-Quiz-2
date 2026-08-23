@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Qualification, GameMode, Question, UserProfile } from '../types';
 import { QUALIFICATIONS_LIST } from '../data/qualifications';
+import { QUESTIONS_DATABASE } from '../data/questions';
 import { SupabaseAuthService } from '../lib/supabase';
 import { 
   ArrowLeft, 
@@ -69,32 +70,36 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
     return { mt: 20, pts: 40 }; // Difícil or Especial
   };
 
-  // Fetch Questions for Qualification
+  // Fetch Questions for Qualification directly from database
   useEffect(() => {
-    async function fetchQuestions() {
+    function loadQualificationQuestions() {
       setLoading(true);
       try {
         const limit = mode === 'classico' ? 10 : mode === 'desafio' ? 15 : 20;
-        const res = await fetch(
-          `/api/questions?qualification=${encodeURIComponent(qualification)}&mode=${mode}&user_id=${user.id}&limit=${limit}`
+        const matchingQuestions = QUESTIONS_DATABASE.filter(
+          (q) => q.qualification === qualification
         );
-        const data = await res.json();
+        
+        // Shuffle questions
+        const shuffled = [...matchingQuestions].sort(() => 0.5 - Math.random());
+        const selected = shuffled.slice(0, limit);
 
-        if (data.questions && data.questions.length > 0) {
-          setQuestions(data.questions);
-          setTotalQuestionsCount(data.questions.length);
-          setAllAnsweredBefore(data.all_answered_previously || false);
+        if (selected.length > 0) {
+          setQuestions(selected);
+          setTotalQuestionsCount(selected.length);
         } else {
-          setQuestions([]);
+          // Fallback to general pool if qualification has fewer questions
+          setQuestions(QUESTIONS_DATABASE.slice(0, limit));
+          setTotalQuestionsCount(limit);
         }
       } catch (err) {
-        console.error('Error fetching questions:', err);
+        console.error('Error loading questions:', err);
       } finally {
         setLoading(false);
       }
     }
 
-    fetchQuestions();
+    loadQualificationQuestions();
   }, [qualification, mode, user.id]);
 
   const currentQuestion = questions[currentIndex];
@@ -172,25 +177,20 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
     setSessionScore((prev) => Math.max(0, prev - 5));
 
     try {
-      const res = await fetch('/api/answers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: user.id,
-          question_id: currentQuestion.id,
-          qualification: qualification,
-          selected_answer: 'skipped',
-          correct: false,
-          points_earned: -5,
-          time_taken_seconds: Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000)),
-        }),
+      const { user_stats } = await SupabaseAuthService.recordAnswer({
+        user_id: user.id,
+        question_id: currentQuestion.id,
+        qualification: qualification,
+        selected_answer: 'skipped',
+        correct: false,
+        points_earned: -5,
+        time_taken_seconds: Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000)),
       });
-      const data = await res.json();
-      if (data.success && onAnswerRecorded) {
-        onAnswerRecorded(data.user_stats);
+      if (user_stats && onAnswerRecorded) {
+        onAnswerRecorded(user_stats);
       }
     } catch (err) {
-      console.error('Error recording skipped question:', err);
+      console.error('Error recording skipped question to Supabase:', err);
     }
   };
 

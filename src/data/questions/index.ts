@@ -19,6 +19,8 @@ export const ALL_INITIAL_QUESTIONS: Question[] = [
   ...CIENCIA_LEIS_QUESTIONS,
 ];
 
+export const QUESTIONS_DATABASE = ALL_INITIAL_QUESTIONS;
+
 // Baseline estimated enterprise question bank count for UI statistics per qualification
 export const ESTIMATED_BANK_COUNTS: Record<Qualification, number> = {
   'Eletricidade Industrial': 5420,
