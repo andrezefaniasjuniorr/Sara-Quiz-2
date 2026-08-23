@@ -1,28 +1,48 @@
 import { createClient } from '@supabase/supabase-js';
 import { UserProfile, Qualification, WithdrawalRequest, ChatMessage } from '../types';
 
+// Helper to sanitize Supabase URL (strictly base URL, trim whitespace and trailing slashes)
+function sanitizeUrl(url?: string): string {
+  if (!url) return 'https://gjbqylheutriojpnopcg.supabase.co';
+  return url.trim().replace(/\/+$/, '');
+}
+
+function sanitizeKey(key?: string): string {
+  if (!key) return 'sb_publishable_msIHuQZlf6hiocY9b36axA_j23_iJJu';
+  return key.trim();
+}
+
 // Read env variables (supports Vite VITE_, Next.js NEXT_PUBLIC_, and fallback defaults)
-export const SUPABASE_URL: string =
+const rawUrl =
   (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SUPABASE_URL) ||
   (typeof process !== 'undefined' && process.env?.VITE_SUPABASE_URL) ||
   (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_SUPABASE_URL) ||
   (typeof process !== 'undefined' && process.env?.SUPABASE_URL) ||
   'https://gjbqylheutriojpnopcg.supabase.co';
 
-export const SUPABASE_ANON_KEY: string =
+const rawKey =
   (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SUPABASE_ANON_KEY) ||
   (typeof process !== 'undefined' && process.env?.VITE_SUPABASE_ANON_KEY) ||
   (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_SUPABASE_ANON_KEY) ||
   (typeof process !== 'undefined' && process.env?.SUPABASE_ANON_KEY) ||
   'sb_publishable_msIHuQZlf6hiocY9b36axA_j23_iJJu';
 
-// Initialize the native Supabase browser client
+export const SUPABASE_URL: string = sanitizeUrl(rawUrl);
+export const SUPABASE_ANON_KEY: string = sanitizeKey(rawKey);
+
+// Initialize the native Supabase browser client APENAS com a URL base e a Anon Key
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
   },
 });
+
+// Helper for generating standard email from phone for Supabase Auth if needed
+export function phoneToEmail(phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+  return `user_${digits || 'guest'}@saraquiz.mz`;
+}
 
 // Helper for fast hashing / simple password verification on client
 export function simpleHash(str: string): string {
@@ -50,28 +70,72 @@ export interface RegisterParams {
 
 export const SupabaseAuthService = {
   /**
-   * Register a new user directly in Supabase table `users`
+   * Register a new user using native supabase.auth.signUp with email, password, and metadata
+   * and synchronizing into public.users table.
    */
   async register(params: RegisterParams): Promise<{ user: UserProfile }> {
     const cleanPhone = params.phone.replace(/[\s\-\+]/g, '');
-
-    // 1. Check if user already exists
-    const { data: existing, error: checkError } = await supabase
-      .from('users')
-      .select('id, phone')
-      .eq('phone', cleanPhone)
-      .maybeSingle();
-
-    if (existing) {
-      throw new Error('Este número de celular já está cadastrado. Por favor, faça login.');
-    }
-
-    const userId = `usr-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-    const passwordHash = simpleHash(params.password);
+    const email = phoneToEmail(cleanPhone);
     const now = new Date().toISOString();
 
+    // 1. Check if user already exists in public.users table
+    try {
+      const { data: existing } = await supabase
+        .from('users')
+        .select('id, phone')
+        .eq('phone', cleanPhone)
+        .maybeSingle();
+
+      if (existing) {
+        throw new Error('Este número de celular já está cadastrado. Por favor, faça login.');
+      }
+    } catch (e: any) {
+      if (e.message && e.message.includes('já está cadastrado')) {
+        throw e;
+      }
+      // Non-blocking if table query fails prior to signup
+    }
+
+    // 2. Native Supabase Auth SignUp
+    let authUserId = `usr-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    
+    try {
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: email,
+        password: params.password,
+        options: {
+          data: {
+            name: params.name.trim(),
+            phone: cleanPhone,
+            age: params.age || 20,
+            avatar: params.avatar || '👨‍🎓',
+            qualification_interest: params.qualification_interest || 'Eletricidade Industrial',
+          },
+        },
+      });
+
+      if (authError) {
+        // If the error is not fatal (e.g. user already exists in Auth), proceed with database row creation
+        console.warn('[Supabase Auth SignUp Notice]:', authError.message);
+        if (authError.message.toLowerCase().includes('already registered')) {
+          throw new Error('Este número/e-mail já está cadastrado no sistema de autenticação. Por favor, faça login.');
+        }
+      }
+
+      if (authData?.user?.id) {
+        authUserId = authData.user.id;
+      }
+    } catch (authErr: any) {
+      if (authErr.message && authErr.message.includes('já está cadastrado')) {
+        throw authErr;
+      }
+      console.warn('[Supabase Auth SignUp Warning]:', authErr.message);
+    }
+
+    const passwordHash = simpleHash(params.password);
+
     const newUserRow = {
-      id: userId,
+      id: authUserId,
       name: params.name.trim(),
       phone: cleanPhone,
       age: params.age || 20,
@@ -90,15 +154,15 @@ export const SupabaseAuthService = {
       qualification_stats: {},
     };
 
-    // 2. Insert into Supabase table `users`
-    const { error: insertError } = await supabase.from('users').insert([newUserRow]);
+    // 3. Upsert into Supabase table `users`
+    const { error: insertError } = await supabase.from('users').upsert([newUserRow]);
 
     if (insertError) {
-      console.error('[Supabase Register Error]:', insertError);
+      console.error('[Supabase Register DB Error]:', insertError);
       throw new Error(`Falha no cadastro: ${insertError.message || 'Erro ao conectar ao Supabase'}`);
     }
 
-    // 3. Log activity in Supabase
+    // 4. Log activity in Supabase
     try {
       await supabase.from('activity_logs').insert([
         {
@@ -106,7 +170,7 @@ export const SupabaseAuthService = {
           type: 'register',
           title: 'Novo Jogador Cadastrado',
           description: `${params.name} ingressou no Sara Quiz com interesse em ${params.qualification_interest}.`,
-          user_id: userId,
+          user_id: authUserId,
           user_name: params.name,
           timestamp: now,
         },
@@ -120,10 +184,21 @@ export const SupabaseAuthService = {
   },
 
   /**
-   * Login user directly using Supabase client
+   * Login user directly using Supabase auth / database
    */
   async login(phone: string, password: string): Promise<{ user: UserProfile }> {
     const cleanPhone = phone.replace(/[\s\-\+]/g, '');
+    const email = phoneToEmail(cleanPhone);
+
+    // Try signing in via Supabase native auth first
+    try {
+      await supabase.auth.signInWithPassword({
+        email: email,
+        password: password,
+      });
+    } catch (e) {
+      // Fallback seamlessly to table verification
+    }
 
     const { data: userRow, error } = await supabase
       .from('users')
