@@ -17,15 +17,15 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // Helper for generating standard email from phone for Supabase Auth
 /**
  * Converts a phone number or raw identifier into a valid synthetic email for Supabase Auth.
- * Example: '844131370' -> '844131370@saraquiz.com'
+ * Format: `${celular.trim()}@saraquiz.com`
  */
 export function phoneToEmail(identifier: string): string {
   const trimmed = (identifier || '').trim();
-  if (trimmed.includes('@') && trimmed.includes('.')) {
+  if (trimmed.includes('@')) {
     return trimmed.toLowerCase();
   }
   const digits = trimmed.replace(/\D/g, '');
-  const clean = digits || '844131370';
+  const clean = digits || trimmed || '844131370';
   return `${clean}@saraquiz.com`;
 }
 
@@ -84,15 +84,16 @@ export interface RegisterParams {
 export const SupabaseAuthService = {
   /**
    * Register a new user directly using native supabase.auth.signUp() with synthetic email
+   * and save profile into public.profiles table
    */
   async register(params: RegisterParams): Promise<{ user: UserProfile }> {
     const rawPhone = (params.phone || '').trim();
     const cleanDigits = rawPhone.replace(/\D/g, '');
-    const cleanPhone = cleanDigits || rawPhone.replace(/[\s\-\+]/g, '') || '844131370';
+    const cleanPhone = cleanDigits || rawPhone || '844131370';
     const email = phoneToEmail(cleanPhone);
     const now = new Date().toISOString();
 
-    let authUserId = `usr-${cleanPhone}`;
+    let authUserId = `usr-${cleanPhone}-${Date.now().toString(36)}`;
     const passwordHash = simpleHash(params.password);
 
     // Call native supabase.auth.signUp directly with converted email (e.g. 844131370@saraquiz.com)
@@ -103,10 +104,14 @@ export const SupabaseAuthService = {
         options: {
           data: {
             name: params.name.trim(),
+            nome_completo: params.name.trim(),
             phone: cleanPhone,
+            celular: cleanPhone,
             age: Number(params.age) || 20,
+            idade: Number(params.age) || 20,
             avatar: params.avatar || '👨‍🎓',
             qualification_interest: params.qualification_interest || 'Eletricidade Industrial',
+            qualificacao: params.qualification_interest || 'Eletricidade Industrial',
           },
         },
       });
@@ -139,19 +144,49 @@ export const SupabaseAuthService = {
       qualification_stats: createEmptyQualificationStats(),
     };
 
-    // Upsert into public.users table for database storage and leaderboard
+    // 1. Save into public.profiles table (id, nome_completo, celular, idade, qualificacao, pontos: 0)
+    try {
+      await supabase.from('profiles').upsert({
+        id: authUserId,
+        nome_completo: params.name.trim(),
+        celular: cleanPhone,
+        idade: Number(params.age) || 20,
+        qualificacao: params.qualification_interest || 'Eletricidade Industrial',
+        pontos: 0,
+        name: params.name.trim(),
+        phone: cleanPhone,
+        age: Number(params.age) || 20,
+        avatar: params.avatar || '👨‍🎓',
+        qualification_interest: params.qualification_interest || 'Eletricidade Industrial',
+        total_points: 0,
+        best_streak: 0,
+        current_streak: 0,
+        total_answered: 0,
+        total_correct: 0,
+        total_skipped: 0,
+        is_online: true,
+        joined_at: now,
+        last_active: now,
+        password_hash: passwordHash,
+      });
+    } catch (profErr) {
+      console.warn('[Supabase profiles upsert note]:', profErr);
+    }
+
+    // 2. Also save into public.users table for complete compatibility
     try {
       await supabase.from('users').upsert({
         ...newUserProfile,
         password_hash: passwordHash,
       });
     } catch (dbErr) {
-      console.warn('[Supabase table upsert note]:', dbErr);
+      console.warn('[Supabase users upsert note]:', dbErr);
     }
 
     // Cache locally for instantaneous session restore
     try {
       localStorage.setItem('sara_quiz_user_profile', JSON.stringify(newUserProfile));
+      localStorage.setItem('sara_quiz_auth_user', JSON.stringify(newUserProfile));
     } catch {}
 
     // Log activity
@@ -180,7 +215,7 @@ export const SupabaseAuthService = {
   async login(phone: string, password: string): Promise<{ user: UserProfile }> {
     const rawPhone = (phone || '').trim();
     const cleanDigits = rawPhone.replace(/\D/g, '');
-    const cleanPhone = cleanDigits || rawPhone.replace(/[\s\-\+]/g, '');
+    const cleanPhone = cleanDigits || rawPhone;
     const email = phoneToEmail(cleanPhone);
 
     let authUser: any = null;
@@ -198,8 +233,51 @@ export const SupabaseAuthService = {
       console.warn('[Supabase SignIn Note]:', err);
     }
 
-    // Check public.users table
+    // Check public.profiles and public.users tables
     try {
+      // Check profiles first
+      const { data: profileRow } = await supabase
+        .from('profiles')
+        .select('*')
+        .or(`celular.eq.${cleanPhone},phone.eq.${cleanPhone},id.eq.${authUser?.id || 'none'}`)
+        .maybeSingle();
+
+      if (profileRow) {
+        const inputHash = simpleHash(password);
+        if (
+          authUser ||
+          profileRow.password_hash === inputHash ||
+          profileRow.password_hash === password ||
+          !profileRow.password_hash
+        ) {
+          const userObj: UserProfile = {
+            id: profileRow.id,
+            name: profileRow.nome_completo || profileRow.name || 'Jogador',
+            phone: profileRow.celular || profileRow.phone || cleanPhone,
+            age: Number(profileRow.idade || profileRow.age) || 20,
+            avatar: profileRow.avatar || '👨‍🎓',
+            qualification_interest: (profileRow.qualificacao || profileRow.qualification_interest || 'Eletricidade Industrial') as Qualification,
+            total_points: profileRow.pontos !== undefined ? Number(profileRow.pontos) : Number(profileRow.total_points) || 0,
+            best_streak: Number(profileRow.best_streak) || 0,
+            current_streak: Number(profileRow.current_streak) || 0,
+            total_answered: Number(profileRow.total_answered) || 0,
+            total_correct: Number(profileRow.total_correct) || 0,
+            total_skipped: Number(profileRow.total_skipped) || 0,
+            is_online: true,
+            joined_at: profileRow.joined_at || new Date().toISOString(),
+            last_active: new Date().toISOString(),
+            qualification_stats: profileRow.qualification_stats || createEmptyQualificationStats(),
+          };
+
+          try {
+            localStorage.setItem('sara_quiz_user_profile', JSON.stringify(userObj));
+            localStorage.setItem('sara_quiz_auth_user', JSON.stringify(userObj));
+          } catch {}
+          return { user: userObj };
+        }
+      }
+
+      // Check users table
       const { data: userRow } = await supabase
         .from('users')
         .select('*')
@@ -217,10 +295,12 @@ export const SupabaseAuthService = {
           const { password_hash, ...publicProfile } = userRow;
           const userObj = {
             ...publicProfile,
+            total_points: Number(publicProfile.total_points) || 0,
             qualification_stats: publicProfile.qualification_stats || createEmptyQualificationStats(),
           } as UserProfile;
           try {
             localStorage.setItem('sara_quiz_user_profile', JSON.stringify(userObj));
+            localStorage.setItem('sara_quiz_auth_user', JSON.stringify(userObj));
           } catch {}
           return { user: userObj };
         }
@@ -234,11 +314,11 @@ export const SupabaseAuthService = {
       const meta = authUser.user_metadata || {};
       const fallbackProfile: UserProfile = {
         id: authUser.id,
-        name: meta.name || 'Jogador',
-        phone: meta.phone || cleanPhone,
-        age: Number(meta.age) || 20,
+        name: meta.nome_completo || meta.name || 'Jogador',
+        phone: meta.celular || meta.phone || cleanPhone,
+        age: Number(meta.idade || meta.age) || 20,
         avatar: meta.avatar || '👨‍🎓',
-        qualification_interest: meta.qualification_interest || 'Eletricidade Industrial',
+        qualification_interest: (meta.qualificacao || meta.qualification_interest || 'Eletricidade Industrial') as Qualification,
         total_points: 0,
         best_streak: 0,
         current_streak: 0,
@@ -252,6 +332,7 @@ export const SupabaseAuthService = {
       };
       try {
         localStorage.setItem('sara_quiz_user_profile', JSON.stringify(fallbackProfile));
+        localStorage.setItem('sara_quiz_auth_user', JSON.stringify(fallbackProfile));
       } catch {}
       return { user: fallbackProfile };
     }
@@ -261,7 +342,7 @@ export const SupabaseAuthService = {
       const localCached = localStorage.getItem('sara_quiz_user_profile');
       if (localCached) {
         const parsed = JSON.parse(localCached);
-        if (parsed.phone === cleanPhone) {
+        if (parsed.phone === cleanPhone || parsed.celular === cleanPhone) {
           return { user: parsed };
         }
       }
@@ -274,24 +355,57 @@ export const SupabaseAuthService = {
    * Fetch current user profile directly from Supabase
    */
   async getProfile(userId: string): Promise<UserProfile | null> {
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('id', userId)
-      .maybeSingle();
+    try {
+      // 1. Try profiles table
+      const { data: profData } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle();
 
-    if (error || !data) return null;
-    const { password_hash, ...profile } = data;
-    return {
-      ...profile,
-      total_points: Number(profile.total_points) || 0,
-      best_streak: Number(profile.best_streak) || 0,
-      current_streak: Number(profile.current_streak) || 0,
-      total_answered: Number(profile.total_answered) || 0,
-      total_correct: Number(profile.total_correct) || 0,
-      total_skipped: Number(profile.total_skipped) || 0,
-      qualification_stats: profile.qualification_stats || createEmptyQualificationStats(),
-    } as UserProfile;
+      if (profData) {
+        return {
+          id: profData.id,
+          name: profData.nome_completo || profData.name || 'Jogador',
+          phone: profData.celular || profData.phone || '',
+          age: Number(profData.idade || profData.age) || 20,
+          avatar: profData.avatar || '👨‍🎓',
+          qualification_interest: (profData.qualificacao || profData.qualification_interest || 'Eletricidade Industrial') as Qualification,
+          total_points: profData.pontos !== undefined ? Number(profData.pontos) : Number(profData.total_points) || 0,
+          best_streak: Number(profData.best_streak) || 0,
+          current_streak: Number(profData.current_streak) || 0,
+          total_answered: Number(profData.total_answered) || 0,
+          total_correct: Number(profData.total_correct) || 0,
+          total_skipped: Number(profData.total_skipped) || 0,
+          is_online: Boolean(profData.is_online),
+          joined_at: profData.joined_at || new Date().toISOString(),
+          last_active: profData.last_active || new Date().toISOString(),
+          qualification_stats: profData.qualification_stats || createEmptyQualificationStats(),
+        };
+      }
+
+      // 2. Try users table
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (error || !data) return null;
+      const { password_hash, ...profile } = data;
+      return {
+        ...profile,
+        total_points: Number(profile.total_points) || 0,
+        best_streak: Number(profile.best_streak) || 0,
+        current_streak: Number(profile.current_streak) || 0,
+        total_answered: Number(profile.total_answered) || 0,
+        total_correct: Number(profile.total_correct) || 0,
+        total_skipped: Number(profile.total_skipped) || 0,
+        qualification_stats: profile.qualification_stats || createEmptyQualificationStats(),
+      } as UserProfile;
+    } catch {
+      return null;
+    }
   },
 
   /**
@@ -309,10 +423,23 @@ export const SupabaseAuthService = {
     const payload: any = {
       last_active: new Date().toISOString(),
     };
-    if (updates.name) payload.name = updates.name.trim();
+    if (updates.name) {
+      payload.name = updates.name.trim();
+      payload.nome_completo = updates.name.trim();
+    }
     if (updates.avatar) payload.avatar = updates.avatar;
-    if (updates.qualification_interest) payload.qualification_interest = updates.qualification_interest;
-    if (updates.age) payload.age = Number(updates.age);
+    if (updates.qualification_interest) {
+      payload.qualification_interest = updates.qualification_interest;
+      payload.qualificacao = updates.qualification_interest;
+    }
+    if (updates.age) {
+      payload.age = Number(updates.age);
+      payload.idade = Number(updates.age);
+    }
+
+    try {
+      await supabase.from('profiles').update(payload).eq('id', userId);
+    } catch {}
 
     const { data, error } = await supabase
       .from('users')
@@ -321,7 +448,9 @@ export const SupabaseAuthService = {
       .select()
       .maybeSingle();
 
-    if (error || !data) return null;
+    if (error || !data) {
+      return this.getProfile(userId);
+    }
     const { password_hash, ...profile } = data;
     return {
       ...profile,
@@ -331,6 +460,8 @@ export const SupabaseAuthService = {
 
   /**
    * Record answer result directly to Supabase
+   * Supports negative score updates (e.g. 0 - 5 = -5)
+   * Updates public.profiles and public.users immediately
    */
   async recordAnswer(payload: {
     user_id: string;
@@ -360,57 +491,128 @@ export const SupabaseAuthService = {
       console.warn('Answered questions insert warning:', e);
     }
 
-    // 2. Fetch and update user stats in Supabase
-    const { data: userRow } = await supabase
-      .from('users')
-      .select('*')
-      .eq('id', payload.user_id)
-      .maybeSingle();
+    // 2. Fetch current points from profiles or users
+    let total_points = 0;
+    let total_answered = 0;
+    let total_correct = 0;
+    let total_skipped = 0;
+    let current_streak = 0;
+    let best_streak = 0;
 
-    if (userRow) {
-      let total_points = Number(userRow.total_points) || 0;
-      let total_answered = (Number(userRow.total_answered) || 0) + 1;
-      let total_correct = Number(userRow.total_correct) || 0;
-      let current_streak = Number(userRow.current_streak) || 0;
-      let best_streak = Number(userRow.best_streak) || 0;
+    try {
+      const { data: profRow } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', payload.user_id)
+        .maybeSingle();
 
-      if (payload.correct) {
-        total_correct += 1;
-        current_streak += 1;
-        if (current_streak > best_streak) best_streak = current_streak;
-        total_points += payload.points_earned;
+      if (profRow) {
+        total_points = profRow.pontos !== undefined ? Number(profRow.pontos) : Number(profRow.total_points) || 0;
+        total_answered = Number(profRow.total_answered) || 0;
+        total_correct = Number(profRow.total_correct) || 0;
+        total_skipped = Number(profRow.total_skipped) || 0;
+        current_streak = Number(profRow.current_streak) || 0;
+        best_streak = Number(profRow.best_streak) || 0;
       } else {
-        current_streak = 0;
-        // penalty points deduction
-        const penaltyPts = payload.points_earned < 0 ? Math.abs(payload.points_earned) : 0;
-        total_points = Math.max(0, total_points - penaltyPts);
-      }
+        const { data: userRow } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', payload.user_id)
+          .maybeSingle();
 
+        if (userRow) {
+          total_points = Number(userRow.total_points) || 0;
+          total_answered = Number(userRow.total_answered) || 0;
+          total_correct = Number(userRow.total_correct) || 0;
+          total_skipped = Number(userRow.total_skipped) || 0;
+          current_streak = Number(userRow.current_streak) || 0;
+          best_streak = Number(userRow.best_streak) || 0;
+        }
+      }
+    } catch (err) {
+      console.warn('Error reading current stats for answer:', err);
+    }
+
+    total_answered += 1;
+
+    if (payload.correct) {
+      total_correct += 1;
+      current_streak += 1;
+      if (current_streak > best_streak) best_streak = current_streak;
+      total_points += payload.points_earned;
+    } else {
+      current_streak = 0;
+      if (payload.selected_answer === 'skipped') {
+        total_skipped += 1;
+      }
+      // SUBTRACT POINTS: ALLOW NEGATIVE SCORE (e.g. 0 - 5 = -5)
+      const penalty = payload.points_earned < 0 ? payload.points_earned : -5;
+      total_points = total_points + penalty;
+    }
+
+    const nowStr = new Date().toISOString();
+
+    // 3. Update public.profiles table immediately
+    try {
+      await supabase
+        .from('profiles')
+        .update({
+          pontos: total_points,
+          total_points,
+          total_answered,
+          total_correct,
+          total_skipped,
+          current_streak,
+          best_streak,
+          last_active: nowStr,
+        })
+        .eq('id', payload.user_id);
+    } catch (profUpErr) {
+      console.warn('Error updating profiles points in Supabase:', profUpErr);
+    }
+
+    // 4. Update public.users table immediately
+    try {
       await supabase
         .from('users')
         .update({
           total_points,
           total_answered,
           total_correct,
+          total_skipped,
           current_streak,
           best_streak,
-          last_active: new Date().toISOString(),
+          last_active: nowStr,
         })
         .eq('id', payload.user_id);
-
-      return {
-        user_stats: {
-          total_points,
-          total_answered,
-          total_correct,
-          total_skipped: Number(userRow.total_skipped) || 0,
-          current_streak,
-          best_streak,
-        },
-      };
+    } catch (userUpErr) {
+      console.warn('Error updating users points in Supabase:', userUpErr);
     }
 
-    return { user_stats: null };
+    const userStats = {
+      total_points,
+      total_answered,
+      total_correct,
+      total_skipped,
+      current_streak,
+      best_streak,
+    };
+
+    // Update local cache
+    try {
+      const savedAuth = localStorage.getItem('sara_quiz_auth_user');
+      if (savedAuth) {
+        const parsed = JSON.parse(savedAuth);
+        if (parsed.id === payload.user_id) {
+          localStorage.setItem(
+            'sara_quiz_auth_user',
+            JSON.stringify({ ...parsed, ...userStats })
+          );
+        }
+      }
+    } catch {}
+
+    return { user_stats: userStats };
   },
 
   /**
@@ -425,7 +627,20 @@ export const SupabaseAuthService = {
     const requiredPoints = payload.amount_mt * 2;
 
     // Get user
-    const { data: user } = await supabase.from('users').select('*').eq('id', payload.user_id).single();
+    let user: any = null;
+    const { data: prof } = await supabase.from('profiles').select('*').eq('id', payload.user_id).maybeSingle();
+    if (prof) {
+      user = {
+        id: prof.id,
+        name: prof.nome_completo || prof.name,
+        phone: prof.celular || prof.phone,
+        total_points: prof.pontos !== undefined ? Number(prof.pontos) : Number(prof.total_points) || 0,
+      };
+    } else {
+      const { data: u } = await supabase.from('users').select('*').eq('id', payload.user_id).single();
+      user = u;
+    }
+
     if (!user) throw new Error('Jogador não encontrado.');
     if (Number(user.total_points) < requiredPoints) {
       throw new Error('Saldo insuficiente para efetuar este levantamento.');
@@ -433,7 +648,12 @@ export const SupabaseAuthService = {
 
     // Deduct points
     const newPoints = Number(user.total_points) - requiredPoints;
-    await supabase.from('users').update({ total_points: newPoints }).eq('id', payload.user_id);
+    try {
+      await supabase.from('profiles').update({ pontos: newPoints, total_points: newPoints }).eq('id', payload.user_id);
+    } catch {}
+    try {
+      await supabase.from('users').update({ total_points: newPoints }).eq('id', payload.user_id);
+    } catch {}
 
     const withdrawalId = `wdr-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
     const newWithdrawal: WithdrawalRequest = {
@@ -506,28 +726,51 @@ export const SupabaseAuthService = {
 };
 
 // ----------------------------------------------------
-// 100% Native Supabase Database Methods (Zero local Express)
+// 100% Native Supabase Database Methods (Realtime support)
 // ----------------------------------------------------
 
 export const SupabaseDB = {
   /**
-   * Get Rankings directly from Supabase
+   * Get Rankings directly from Supabase (profiles / users)
+   * Ordered by points descending (supporting negative scores)
    */
   async getRankings(qualification?: string): Promise<LeaderboardEntry[]> {
     try {
-      let query = supabase
-        .from('users')
+      // 1. Try querying profiles table
+      let profQuery = supabase
+        .from('profiles')
         .select('*')
-        .order('total_points', { ascending: false })
-        .limit(50);
+        .order('pontos', { ascending: false })
+        .limit(60);
 
       if (qualification && qualification !== 'Global') {
-        query = query.eq('qualification_interest', qualification);
+        profQuery = profQuery.or(`qualificacao.eq.${qualification},qualification_interest.eq.${qualification}`);
       }
 
-      const { data, error } = await query;
-      if (error || !data || data.length === 0) {
-        // Fallback default sample leaderboard if table is empty
+      const { data: profData, error: profError } = await profQuery;
+
+      let sourceData = profData;
+
+      // 2. Fallback to users table if profiles table is empty or errored
+      if (profError || !sourceData || sourceData.length === 0) {
+        let userQuery = supabase
+          .from('users')
+          .select('*')
+          .order('total_points', { ascending: false })
+          .limit(60);
+
+        if (qualification && qualification !== 'Global') {
+          userQuery = userQuery.eq('qualification_interest', qualification);
+        }
+
+        const { data: userData, error: userError } = await userQuery;
+        if (!userError && userData && userData.length > 0) {
+          sourceData = userData;
+        }
+      }
+
+      if (!sourceData || sourceData.length === 0) {
+        // Fallback default sample leaderboard if both tables are empty
         return [
           { position: 1, user_id: 'usr-top1', name: 'Dr. Valdemar Chissano', avatar: '👨‍💼', points: 14500, streak: 28, accuracy_pct: 97, top_qualification: 'Eletricidade Industrial', is_online: true },
           { position: 2, user_id: 'usr-top2', name: 'Engª. Sara Mondlane', avatar: '👩‍🔬', points: 13200, streak: 24, accuracy_pct: 94, top_qualification: 'Mecânica Industrial', is_online: true },
@@ -535,21 +778,28 @@ export const SupabaseDB = {
         ];
       }
 
-      return data.map((u: any, idx: number) => {
+      // Sort carefully descending (allowing negative points)
+      const sorted = [...sourceData].sort((a, b) => {
+        const ptsA = a.pontos !== undefined ? Number(a.pontos) : Number(a.total_points) || 0;
+        const ptsB = b.pontos !== undefined ? Number(b.pontos) : Number(b.total_points) || 0;
+        return ptsB - ptsA;
+      });
+
+      return sorted.map((u: any, idx: number) => {
         const answered = Number(u.total_answered) || 0;
         const correct = Number(u.total_correct) || 0;
         const accuracy_pct = answered > 0 ? Math.round((correct / answered) * 100) : 0;
-        const points = Number(u.total_points) || 0;
+        const points = u.pontos !== undefined ? Number(u.pontos) : Number(u.total_points) || 0;
 
         return {
           position: idx + 1,
           user_id: u.id,
-          name: u.name,
+          name: u.nome_completo || u.name || 'Jogador',
           avatar: u.avatar || '👨‍🎓',
           points,
           streak: Number(u.best_streak) || 0,
           accuracy_pct,
-          top_qualification: (u.qualification_interest as Qualification) || 'Eletricidade Industrial',
+          top_qualification: (u.qualificacao || u.qualification_interest || 'Eletricidade Industrial') as Qualification,
           is_online: Boolean(u.is_online),
         };
       });
@@ -560,45 +810,67 @@ export const SupabaseDB = {
   },
 
   /**
-   * Get Global Chat Messages directly from Supabase
+   * Get Global Chat Messages directly from Supabase (messages / chat_messages)
    */
   async getGlobalMessages(): Promise<ChatMessage[]> {
     try {
+      // Try chat_messages
       const { data, error } = await supabase
         .from('chat_messages')
         .select('*')
-        .eq('channel', 'global')
+        .or('channel.eq.global,channel.is.null')
         .order('timestamp', { ascending: true })
         .limit(100);
 
-      if (error || !data || data.length === 0) {
-        return [
-          {
-            id: 'init-msg-1',
-            user_id: 'sys-sara',
-            user_name: 'Sara (Tutora IA)',
-            user_avatar: '👩‍🏫',
-            user_qualification: 'Ensino Geral',
-            message: 'Bem-vindo ao Sara Quiz! Tire dúvidas técnicas e desafie colegas em tempo real.',
-            created_at: new Date(Date.now() - 3600000).toISOString(),
-            reported: false,
-            report_count: 0,
-            is_system: true,
-          },
-        ];
+      if (!error && data && data.length > 0) {
+        return data.map((d: any) => ({
+          id: d.id,
+          user_id: d.sender_id || d.user_id,
+          user_name: d.sender_name || d.user_name || 'Jogador',
+          user_avatar: d.sender_avatar || d.user_avatar || '👨‍🎓',
+          user_qualification: d.user_qualification || 'Eletricidade Industrial',
+          message: d.content || d.message || '',
+          created_at: d.timestamp || d.created_at || new Date().toISOString(),
+          reported: Boolean(d.reported),
+          report_count: Number(d.report_count) || 0,
+        }));
       }
 
-      return data.map((d: any) => ({
-        id: d.id,
-        user_id: d.sender_id || d.user_id,
-        user_name: d.sender_name || d.user_name,
-        user_avatar: d.sender_avatar || d.user_avatar || '👨‍🎓',
-        user_qualification: d.user_qualification || 'Eletricidade Industrial',
-        message: d.content || d.message || '',
-        created_at: d.timestamp || d.created_at || new Date().toISOString(),
-        reported: Boolean(d.reported),
-        report_count: Number(d.report_count) || 0,
-      }));
+      // Try messages
+      const { data: msgData, error: msgError } = await supabase
+        .from('messages')
+        .select('*')
+        .order('created_at', { ascending: true })
+        .limit(100);
+
+      if (!msgError && msgData && msgData.length > 0) {
+        return msgData.map((d: any) => ({
+          id: d.id,
+          user_id: d.user_id || d.sender_id,
+          user_name: d.user_name || d.sender_name || 'Jogador',
+          user_avatar: d.user_avatar || d.sender_avatar || '👨‍🎓',
+          user_qualification: d.user_qualification || 'Eletricidade Industrial',
+          message: d.message || d.content || '',
+          created_at: d.created_at || d.timestamp || new Date().toISOString(),
+          reported: Boolean(d.reported),
+          report_count: Number(d.report_count) || 0,
+        }));
+      }
+
+      return [
+        {
+          id: 'init-msg-1',
+          user_id: 'sys-sara',
+          user_name: 'Sara (Tutora IA)',
+          user_avatar: '👩‍🏫',
+          user_qualification: 'Ensino Geral',
+          message: 'Bem-vindo ao Sara Quiz! Tire dúvidas técnicas e desafie colegas em tempo real.',
+          created_at: new Date(Date.now() - 3600000).toISOString(),
+          reported: false,
+          report_count: 0,
+          is_system: true,
+        },
+      ];
     } catch {
       return [];
     }
@@ -626,17 +898,39 @@ export const SupabaseDB = {
       report_count: 0,
     };
 
-    await supabase.from('chat_messages').insert([
-      {
-        id: newMessage.id,
-        sender_id: newMessage.user_id,
-        sender_name: newMessage.user_name,
-        sender_avatar: newMessage.user_avatar,
-        content: newMessage.message,
-        channel: 'global',
-        timestamp: newMessage.created_at,
-      },
-    ]);
+    // Insert into chat_messages
+    try {
+      await supabase.from('chat_messages').insert([
+        {
+          id: newMessage.id,
+          sender_id: newMessage.user_id,
+          sender_name: newMessage.user_name,
+          sender_avatar: newMessage.user_avatar,
+          user_qualification: newMessage.user_qualification,
+          content: newMessage.message,
+          message: newMessage.message,
+          channel: 'global',
+          timestamp: newMessage.created_at,
+          created_at: newMessage.created_at,
+        },
+      ]);
+    } catch {}
+
+    // Also insert into messages table if present
+    try {
+      await supabase.from('messages').insert([
+        {
+          id: newMessage.id,
+          user_id: newMessage.user_id,
+          user_name: newMessage.user_name,
+          user_avatar: newMessage.user_avatar,
+          user_qualification: newMessage.user_qualification,
+          message: newMessage.message,
+          created_at: newMessage.created_at,
+        },
+      ]);
+    } catch {}
+
     return newMessage;
   },
 
@@ -864,8 +1158,11 @@ export const SupabaseDB = {
     try {
       const { data: user } = await supabase.from('users').select('total_points, name').eq('id', userId).single();
       if (user) {
-        const newPoints = Math.max(0, Number(user.total_points) - penaltyPoints);
+        const newPoints = Number(user.total_points) - penaltyPoints;
         await supabase.from('users').update({ total_points: newPoints }).eq('id', userId);
+        try {
+          await supabase.from('profiles').update({ pontos: newPoints, total_points: newPoints }).eq('id', userId);
+        } catch {}
         await supabase.from('activity_logs').insert([
           {
             id: `act-${Date.now()}`,

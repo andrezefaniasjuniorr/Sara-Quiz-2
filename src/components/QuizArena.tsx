@@ -174,7 +174,7 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
     setSkipFeedback(true);
     setSessionSkippedCount((prev) => prev + 1);
     setSessionStreak(0);
-    setSessionScore((prev) => Math.max(0, prev - 5));
+    setSessionScore((prev) => prev - 5);
 
     try {
       const { user_stats } = await SupabaseAuthService.recordAnswer({
@@ -205,6 +205,7 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
     // Base point range (5-20 Fácil, 21-50 Médio, 51-100 Difícil)
     let earnedPoints = 0;
     let newStreak = sessionStreak;
+    const penalty = getPenaltyForDifficulty(currentQuestion.difficulty);
 
     if (isCorrect) {
       newStreak = sessionStreak + 1;
@@ -223,12 +224,11 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
       setSessionStreak(0);
 
       // PENALTY TAX ON WRONG ANSWER (5 to 20 MT / 10 to 40 Points)
-      const penalty = getPenaltyForDifficulty(currentQuestion.difficulty);
       setSessionPenaltyTotalMt((prev) => prev + penalty.mt);
       setSessionPenaltyTotalPts((prev) => prev + penalty.pts);
       setSessionWrongCount((prev) => prev + 1);
       setLastPenaltyInfo({ mt: penalty.mt, pts: penalty.pts });
-      setSessionScore((prev) => Math.max(0, prev - penalty.pts));
+      setSessionScore((prev) => prev - penalty.pts);
 
       if (mode === 'sequencia') {
         setTimeout(() => {
@@ -238,14 +238,14 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
     }
 
     try {
-      // 100% Native Supabase Answer Recording
+      // 100% Native Supabase Answer Recording with Negative Balance deduction
       const { user_stats } = await SupabaseAuthService.recordAnswer({
         user_id: user.id,
         question_id: currentQuestion.id,
         qualification: qualification,
         selected_answer: selected,
         correct: isCorrect,
-        points_earned: earnedPoints,
+        points_earned: isCorrect ? earnedPoints : -penalty.pts,
         time_taken_seconds: timeTaken,
       });
 
@@ -404,27 +404,27 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
 
   // 4. Main Question Arena
   return (
-    <div id="screen-quiz-arena" className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 animate-fadeIn">
+    <div id="screen-quiz-arena" className="max-w-4xl mx-auto px-2.5 sm:px-6 lg:px-8 py-2 sm:py-6 flex flex-col justify-between animate-fadeIn">
       
       {/* Top Session Bar */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3 sm:p-4 mb-5 flex items-center justify-between shadow-md">
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-2.5 sm:p-4 mb-3 sm:mb-5 flex items-center justify-between shadow-md">
         <button
           onClick={onExit}
-          className="text-xs font-bold text-slate-400 hover:text-white flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-slate-800 transition-all cursor-pointer"
+          className="text-xs font-bold text-slate-400 hover:text-white flex items-center gap-1 px-2.5 py-1.5 rounded-lg hover:bg-slate-800 transition-all cursor-pointer"
         >
-          <ArrowLeft className="w-4 h-4" />
+          <ArrowLeft className="w-3.5 h-3.5" />
           <span>Sair</span>
         </button>
 
         {/* Center Indicators */}
-        <div className="flex items-center gap-4 text-xs font-bold">
+        <div className="flex items-center gap-2 sm:gap-4 text-[11px] sm:text-xs font-bold">
           <span className="text-slate-300">
-            Questão <strong className="text-amber-400">{currentIndex + 1}</strong> de {questions.length}
+            Q. <strong className="text-amber-400">{currentIndex + 1}</strong>/{questions.length}
           </span>
-          <span className="text-slate-600">|</span>
-          <span className="text-amber-400 flex items-center gap-1">
+          <span className="text-slate-700">|</span>
+          <span className={`flex items-center gap-1 font-mono ${sessionScore < 0 ? 'text-rose-400 font-bold' : 'text-amber-400'}`}>
             <Award className="w-3.5 h-3.5" />
-            <span>+{sessionScore} pts ({sessionScore / 2} MT)</span>
+            <span>{sessionScore > 0 ? `+${sessionScore}` : sessionScore} pts</span>
           </span>
           {sessionStreak > 0 && (
             <span className="hidden sm:flex items-center text-orange-400 font-extrabold gap-1">
@@ -435,7 +435,7 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
         </div>
 
         {/* Timer */}
-        <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full font-mono font-bold text-xs ${
+        <div className={`flex items-center gap-1 px-2.5 py-1 rounded-full font-mono font-bold text-xs ${
           timeLeft <= 5 ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40 animate-pulse' : 'bg-slate-800 text-slate-200'
         }`}>
           <Timer className="w-3.5 h-3.5" />
@@ -444,12 +444,12 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
       </div>
 
       {/* Question Card */}
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl mb-6 relative">
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl p-3.5 sm:p-7 shadow-2xl mb-3 sm:mb-6 relative flex flex-col justify-between">
         
         {/* Difficulty Badge & Scientist Pill */}
-        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className={`text-[11px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full border ${
+        <div className="flex flex-wrap items-center justify-between gap-1.5 mb-2.5 sm:mb-4">
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+            <span className={`text-[10px] sm:text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
               currentQuestion.difficulty === 'Fácil' 
                 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
                 : currentQuestion.difficulty === 'Médio'
@@ -460,54 +460,50 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
             </span>
 
             {/* Error penalty indicator */}
-            <span className="text-[11px] font-bold text-rose-400 bg-rose-500/10 px-2.5 py-0.5 rounded-full border border-rose-500/25 flex items-center gap-1">
+            <span className="text-[10px] sm:text-[11px] font-bold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-500/25 flex items-center gap-1">
               <AlertTriangle className="w-3 h-3 text-rose-400" />
-              <span>Taxa por Erro: -{getPenaltyForDifficulty(currentQuestion.difficulty).mt} MT (-{getPenaltyForDifficulty(currentQuestion.difficulty).pts} pts)</span>
-            </span>
-
-            <span className="text-xs text-slate-400 font-medium hidden sm:inline">
-              {currentQuestion.subcategory}
+              <span>Taxa Erro: -{getPenaltyForDifficulty(currentQuestion.difficulty).mt} MT (-{getPenaltyForDifficulty(currentQuestion.difficulty).pts} pts)</span>
             </span>
           </div>
 
           {currentQuestion.scientist_law && (
-            <span className="text-[11px] font-semibold text-amber-300 bg-amber-500/10 px-2.5 py-0.5 rounded-full border border-amber-500/20">
-              🔬 {currentQuestion.scientist_law.lawOrPrinciple} ({currentQuestion.scientist_law.scientist})
+            <span className="text-[10px] sm:text-[11px] font-semibold text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20 truncate max-w-[200px] sm:max-w-none">
+              🔬 {currentQuestion.scientist_law.lawOrPrinciple}
             </span>
           )}
         </div>
 
         {/* Question Text */}
-        <h2 className="text-base sm:text-xl font-bold text-white leading-relaxed mb-6">
+        <h2 className="text-xs sm:text-base md:text-lg font-bold text-white leading-snug sm:leading-relaxed mb-3 sm:mb-5">
           {currentQuestion.question}
         </h2>
 
         {/* Skip Question Alert Notice */}
         {skipFeedback && (
-          <div className="mb-4 p-3 rounded-2xl bg-blue-500/10 border border-blue-500/30 text-blue-300 text-xs font-bold flex items-center gap-2 animate-fadeIn">
-            <FastForward className="w-4 h-4 text-blue-400" />
-            <span>Questão pulada com sucesso. Penalidade de -5 pontos aplicada ao seu saldo.</span>
+          <div className="mb-3 p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-300 text-xs font-bold flex items-center gap-2 animate-fadeIn">
+            <FastForward className="w-3.5 h-3.5 text-blue-400" />
+            <span>Questão pulada. Penalidade de -5 pontos aplicada.</span>
           </div>
         )}
 
         {/* Penalty Feedback Alert on Wrong Answer */}
         {lastPenaltyInfo && (
-          <div className="mb-4 p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-200 text-xs font-bold flex items-center justify-between gap-3 animate-fadeIn shadow-lg shadow-rose-950/20">
-            <div className="flex items-center gap-2">
-              <XCircle className="w-5 h-5 text-rose-400 shrink-0" />
-              <span>
-                {selectedOption === 'timeout' ? 'Tempo esgotado!' : 'Resposta Incorreta!'} Penalidade aplicada: <strong className="text-white underline">-{lastPenaltyInfo.mt} MT (-{lastPenaltyInfo.pts} pts)</strong> foram deduzidos do seu saldo.
+          <div className="mb-3 p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-200 text-xs font-bold flex items-center justify-between gap-2 animate-fadeIn shadow-lg shadow-rose-950/20">
+            <div className="flex items-center gap-1.5">
+              <XCircle className="w-4 h-4 text-rose-400 shrink-0" />
+              <span className="text-[11px] sm:text-xs">
+                {selectedOption === 'timeout' ? 'Tempo esgotado!' : 'Incorreta!'} Penalidade de <strong className="text-white underline">-{lastPenaltyInfo.mt} MT (-{lastPenaltyInfo.pts} pts)</strong> debitada.
               </span>
             </div>
-            <span className="text-xs px-2.5 py-1 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-300 font-mono font-black shrink-0">
+            <span className="text-[10px] sm:text-xs px-2 py-0.5 rounded-lg bg-rose-500/20 border border-rose-500/40 text-rose-300 font-mono font-black shrink-0">
               -{lastPenaltyInfo.mt} MT
             </span>
           </div>
         )}
 
         {/* 4 Options Grid */}
-        <div className="space-y-3">
-          {(['a', 'b', 'c', 'd'] as const).map((key, idx) => {
+        <div className="space-y-2 sm:space-y-3">
+          {(['a', 'b', 'c', 'd'] as const).map((key) => {
             const optText = currentQuestion.options[key];
             if (!optText) return null;
 
@@ -528,10 +524,10 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
                 key={key}
                 disabled={isAnswered}
                 onClick={() => handleSelectOption(key)}
-                className={`w-full p-4 rounded-2xl border text-left text-xs sm:text-sm transition-all flex items-center justify-between group cursor-pointer ${btnStyle}`}
+                className={`w-full p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border text-left text-xs sm:text-sm transition-all flex items-center justify-between group cursor-pointer ${btnStyle}`}
               >
-                <div className="flex items-center gap-3.5">
-                  <span className={`w-7 h-7 rounded-xl font-black text-xs flex items-center justify-center shrink-0 border ${
+                <div className="flex items-center gap-2.5 sm:gap-3.5">
+                  <span className={`w-6 h-6 sm:w-7 sm:h-7 rounded-lg sm:rounded-xl font-black text-xs flex items-center justify-center shrink-0 border ${
                     isAnswered && key === currentQuestion.correct_answer
                       ? 'bg-emerald-500 text-slate-950 border-emerald-400'
                       : isAnswered && selectedOption === key
@@ -540,14 +536,14 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
                   }`}>
                     {key.toUpperCase()}
                   </span>
-                  <span className="leading-snug">{optText}</span>
+                  <span className="leading-tight sm:leading-snug">{optText}</span>
                 </div>
 
                 {isAnswered && key === currentQuestion.correct_answer && (
-                  <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 ml-2" />
+                  <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-400 shrink-0 ml-1.5" />
                 )}
                 {isAnswered && selectedOption === key && key !== currentQuestion.correct_answer && (
-                  <XCircle className="w-5 h-5 text-rose-400 shrink-0 ml-2" />
+                  <XCircle className="w-4 h-4 sm:w-5 sm:h-5 text-rose-400 shrink-0 ml-1.5" />
                 )}
               </button>
             );
@@ -556,31 +552,31 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
 
         {/* Explanation Box */}
         {isAnswered && (
-          <div className="mt-6 p-4 rounded-2xl bg-slate-950 border border-slate-800 animate-fadeIn">
-            <div className="flex items-center gap-1.5 text-xs font-bold text-amber-400 mb-1.5">
-              <BookOpen className="w-4 h-4" />
+          <div className="mt-3 sm:mt-5 p-3 rounded-xl sm:rounded-2xl bg-slate-950 border border-slate-800 animate-fadeIn">
+            <div className="flex items-center gap-1.5 text-[11px] sm:text-xs font-bold text-amber-400 mb-1">
+              <BookOpen className="w-3.5 h-3.5" />
               <span>Explicação Técnica e Científica:</span>
             </div>
-            <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            <p className="text-[11px] sm:text-xs text-slate-300 leading-relaxed line-clamp-3 sm:line-clamp-none">
               {currentQuestion.explanation}
             </p>
           </div>
         )}
 
         {/* Action Controls: Skip Question & Next */}
-        <div className="mt-6 pt-5 border-t border-slate-800 flex items-center justify-between gap-3">
+        <div className="mt-3 sm:mt-5 pt-3 sm:pt-4 border-t border-slate-800 flex items-center justify-between gap-2">
           
           {/* Skip Button (-5 pts penalty) */}
           {!isAnswered ? (
             <button
               onClick={handleSkipQuestion}
-              className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white border border-slate-700 text-xs font-bold transition-all flex items-center gap-2 cursor-pointer"
+              className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white border border-slate-700 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
             >
-              <FastForward className="w-4 h-4 text-amber-400" />
-              <span>Pular Questão (-5 pts)</span>
+              <FastForward className="w-3.5 h-3.5 text-amber-400" />
+              <span>Pular (-5 pts)</span>
             </button>
           ) : (
-            <div className="text-xs text-slate-400">
+            <div className="text-[11px] text-slate-400 hidden sm:block">
               Pressione <strong className="text-amber-400">Espaço</strong> ou <strong className="text-amber-400">Enter</strong> para avançar
             </div>
           )}
@@ -589,7 +585,7 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
           {isAnswered && (
             <button
               onClick={handleNextQuestion}
-              className="px-6 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs sm:text-sm transition-all flex items-center gap-1.5 shadow-lg shadow-amber-500/20 cursor-pointer animate-fadeIn"
+              className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs sm:text-sm transition-all flex items-center justify-center gap-1.5 shadow-lg shadow-amber-500/20 cursor-pointer animate-fadeIn"
             >
               <span>{currentIndex + 1 < questions.length ? 'Próxima Questão' : 'Ver Resultados'}</span>
               <ChevronRight className="w-4 h-4" />

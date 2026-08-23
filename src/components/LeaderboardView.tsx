@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Qualification, LeaderboardEntry } from '../types';
 import { QUALIFICATIONS_LIST } from '../data/qualifications';
-import { SupabaseDB } from '../lib/supabase';
-import { Trophy, Medal, Flame, Zap, Award, User, Search } from 'lucide-react';
+import { SupabaseDB, supabase } from '../lib/supabase';
+import { Trophy, Medal, Flame, Zap, Award, User, Search, RefreshCw, Radio } from 'lucide-react';
 
 interface LeaderboardViewProps {
   initialQualification?: Qualification | 'Global';
@@ -16,22 +16,59 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
   const [selectedFilter, setSelectedFilter] = useState<string>(initialQualification || 'Global');
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isRealtimeActive, setIsRealtimeActive] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
 
-  useEffect(() => {
-    async function fetchLeaderboard() {
-      setLoading(true);
-      try {
-        const data = await SupabaseDB.getRankings(selectedFilter);
-        setLeaderboard(data || []);
-      } catch (err) {
-        console.error('Error fetching leaderboard from Supabase:', err);
-      } finally {
-        setLoading(false);
-      }
+  const fetchLeaderboard = async (showLoadingSpinner = true) => {
+    if (showLoadingSpinner) setLoading(true);
+    try {
+      const data = await SupabaseDB.getRankings(selectedFilter);
+      setLeaderboard(data || []);
+    } catch (err) {
+      console.error('Error fetching leaderboard from Supabase:', err);
+    } finally {
+      if (showLoadingSpinner) setLoading(false);
     }
+  };
 
-    fetchLeaderboard();
+  useEffect(() => {
+    fetchLeaderboard(true);
+  }, [selectedFilter]);
+
+  // Realtime subscription using Supabase Channel
+  useEffect(() => {
+    // Subscribe to both 'profiles' and 'users' realtime events
+    const channel = supabase
+      .channel('public:profiles_realtime_ranking')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'profiles' },
+        () => {
+          fetchLeaderboard(false);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'users' },
+        () => {
+          fetchLeaderboard(false);
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          setIsRealtimeActive(true);
+        }
+      });
+
+    // Also periodic refresh fallback every 5 seconds for ultimate freshness
+    const pollInterval = setInterval(() => {
+      fetchLeaderboard(false);
+    }, 5000);
+
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(pollInterval);
+    };
   }, [selectedFilter]);
 
   const filteredEntries = leaderboard.filter((item) =>
@@ -49,12 +86,16 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-bold uppercase tracking-wider mb-3">
           <Trophy className="w-4 h-4 text-amber-400" />
           <span>Quadro de Honra & Classificação</span>
+          <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-bold ml-1 px-1.5 py-0.2 bg-emerald-500/20 rounded-full border border-emerald-500/30">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            REALTIME
+          </span>
         </div>
         <h1 className="text-3xl sm:text-4xl font-black text-white">
           Rankings por <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-orange-400">Qualificação</span>
         </h1>
         <p className="mt-2 text-sm text-slate-300">
-          Veja os melhores desempenhos gerais ou filtre por área técnica e científica específica.
+          Veja os melhores desempenhos gerais ou filtre por área técnica e científica específica. Atualizado em tempo real.
         </p>
       </div>
 
@@ -87,16 +128,25 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
         ))}
       </div>
 
-      {/* Search Input */}
-      <div className="max-w-md mx-auto mb-8 relative">
-        <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-        <input
-          type="text"
-          placeholder="Buscar jogador por nome..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="w-full pl-10 pr-4 py-2.5 bg-slate-900/90 border border-slate-800 rounded-xl text-xs sm:text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-400/80 transition-all"
-        />
+      {/* Search & Refresh Bar */}
+      <div className="max-w-md mx-auto mb-8 flex items-center gap-2">
+        <div className="relative flex-1">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            placeholder="Buscar jogador por nome..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-10 pr-4 py-2.5 bg-slate-900/90 border border-slate-800 rounded-xl text-xs sm:text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-400/80 transition-all"
+          />
+        </div>
+        <button
+          onClick={() => fetchLeaderboard(true)}
+          title="Atualizar ranking agora"
+          className="p-2.5 bg-slate-900 border border-slate-800 rounded-xl text-slate-400 hover:text-amber-400 hover:border-amber-500/40 transition-all cursor-pointer"
+        >
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-amber-400' : ''}`} />
+        </button>
       </div>
 
       {/* Podium Top 3 */}
@@ -115,7 +165,9 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                 <span className="text-xs text-slate-400 block mt-0.5">{top3[1].top_qualification}</span>
               </div>
               <div className="mt-4 pt-3 border-t border-slate-800">
-                <span className="text-xl font-black text-slate-200 block">{top3[1].points.toLocaleString()} pts</span>
+                <span className={`text-xl font-black block font-mono ${top3[1].points < 0 ? 'text-rose-400' : 'text-slate-200'}`}>
+                  {top3[1].points > 0 ? `+${top3[1].points.toLocaleString()}` : top3[1].points.toLocaleString()} pts
+                </span>
                 <span className="text-[11px] text-slate-400">{top3[1].accuracy_pct}% precisão</span>
               </div>
             </div>
@@ -134,7 +186,9 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                 <span className="text-xs font-semibold text-amber-400 block mt-0.5">{top3[0].top_qualification}</span>
               </div>
               <div className="mt-4 pt-3 border-t border-slate-800">
-                <span className="text-2xl font-black text-amber-400 block">{top3[0].points.toLocaleString()} pts</span>
+                <span className={`text-2xl font-black block font-mono ${top3[0].points < 0 ? 'text-rose-400' : 'text-amber-400'}`}>
+                  {top3[0].points > 0 ? `+${top3[0].points.toLocaleString()}` : top3[0].points.toLocaleString()} pts
+                </span>
                 <div className="flex items-center justify-center gap-2 text-xs text-slate-400 mt-1">
                   <span className="flex items-center text-orange-400 font-bold">
                     <Flame className="w-3.5 h-3.5 fill-orange-500" /> {top3[0].streak} streak
@@ -159,7 +213,9 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                 <span className="text-xs text-slate-400 block mt-0.5">{top3[2].top_qualification}</span>
               </div>
               <div className="mt-4 pt-3 border-t border-slate-800">
-                <span className="text-xl font-black text-slate-200 block">{top3[2].points.toLocaleString()} pts</span>
+                <span className={`text-xl font-black block font-mono ${top3[2].points < 0 ? 'text-rose-400' : 'text-slate-200'}`}>
+                  {top3[2].points > 0 ? `+${top3[2].points.toLocaleString()}` : top3[2].points.toLocaleString()} pts
+                </span>
                 <span className="text-[11px] text-slate-400">{top3[2].accuracy_pct}% precisão</span>
               </div>
             </div>
@@ -187,7 +243,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
         {loading ? (
           <div className="p-12 text-center text-slate-400 text-sm">
             <div className="w-8 h-8 border-2 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-            Carregando ranking...
+            Carregando ranking em tempo real...
           </div>
         ) : filteredEntries.length === 0 ? (
           <div className="p-12 text-center text-slate-400 text-sm">
@@ -232,8 +288,10 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
 
                 {/* Score */}
                 <div className="text-right">
-                  <span className="font-black text-amber-400 text-sm sm:text-base block leading-tight">
-                    {player.points.toLocaleString()} pts
+                  <span className={`font-black text-sm sm:text-base block leading-tight font-mono ${
+                    player.points < 0 ? 'text-rose-400 font-bold' : 'text-amber-400'
+                  }`}>
+                    {player.points > 0 ? `+${player.points.toLocaleString()}` : player.points.toLocaleString()} pts
                   </span>
                   <span className="text-[11px] text-slate-500 font-medium">
                     {player.accuracy_pct}% acertos
@@ -248,3 +306,4 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
     </div>
   );
 };
+

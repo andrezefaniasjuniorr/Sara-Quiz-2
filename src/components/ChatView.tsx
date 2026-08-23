@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ChatMessage, UserProfile, Qualification } from '../types';
 import { QUALIFICATIONS_LIST } from '../data/qualifications';
-import { SupabaseDB } from '../lib/supabase';
+import { SupabaseDB, supabase } from '../lib/supabase';
 import { 
   MessageSquare, 
   Send, 
@@ -79,10 +79,45 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
     }
   };
 
+  // Realtime subscription for Global Chat Messages
   useEffect(() => {
     loadGlobalMessages();
-    const interval = setInterval(loadGlobalMessages, 3000);
-    return () => clearInterval(interval);
+
+    const channel = supabase
+      .channel('public:chat_messages_realtime')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'chat_messages' },
+        (payload) => {
+          const newRow = payload.new as any;
+          if (newRow && !newRow.is_private) {
+            setGlobalMessages((prev) => {
+              // Avoid duplicates
+              if (prev.some((m) => m.id === newRow.id)) return prev;
+              return [
+                ...prev,
+                {
+                  id: newRow.id,
+                  user_id: newRow.user_id,
+                  user_name: newRow.user_name || 'Anônimo',
+                  user_avatar: newRow.user_avatar || '🧑‍🎓',
+                  user_qualification: newRow.user_qualification || 'Geral',
+                  message: newRow.message,
+                  created_at: newRow.created_at || new Date().toISOString(),
+                },
+              ];
+            });
+          }
+        }
+      )
+      .subscribe();
+
+    const interval = setInterval(loadGlobalMessages, 4000);
+
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(interval);
+    };
   }, [user.id]);
 
   useEffect(() => {
