@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { UserProfile, Qualification } from '../types';
 import { QUALIFICATIONS_LIST } from '../data/qualifications';
+import { SupabaseAuthService } from '../lib/supabase';
 import { 
   User, 
   Phone, 
@@ -80,33 +81,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setLoading(true);
 
     try {
-      const res = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: name.trim(),
-          phone: phone.trim(),
-          age: Number(age),
-          password,
-          confirm_password: confirmPassword,
-          avatar,
-          qualification_interest: qualification,
-        }),
+      // 100% Native Supabase Registration
+      const { user } = await SupabaseAuthService.register({
+        name: name.trim(),
+        phone: phone.trim(),
+        age: Number(age),
+        password,
+        avatar,
+        qualification_interest: qualification,
       });
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        setErrorMsg(data.error || 'Falha ao registrar conta. Verifique os dados.');
-        return;
-      }
-
-      setSuccessMsg('Conta criada com sucesso! Carregando jogo...');
+      setSuccessMsg('Conta criada com sucesso no Supabase! Carregando jogo...');
       setTimeout(() => {
-        onLoginSuccess(data.user);
-      }, 1000);
+        onLoginSuccess(user);
+      }, 800);
     } catch (err: any) {
-      setErrorMsg('Erro de conexão com o servidor. Tente novamente.');
+      setErrorMsg(err.message || 'Falha ao registrar conta no Supabase. Verifique a conexão.');
     } finally {
       setLoading(false);
     }
@@ -125,28 +115,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setLoading(true);
 
     try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          phone: loginPhone.trim(),
-          password: loginPassword,
-        }),
-      });
+      // 100% Native Supabase Login
+      const { user } = await SupabaseAuthService.login(loginPhone.trim(), loginPassword);
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        setErrorMsg(data.error || 'Credenciais inválidas. Verifique seu número e palavra-passe.');
-        return;
-      }
-
-      setSuccessMsg(`Bem-vindo de volta, ${data.user.name}!`);
+      setSuccessMsg(`Bem-vindo de volta, ${user.name}!`);
       setTimeout(() => {
-        onLoginSuccess(data.user);
-      }, 800);
+        onLoginSuccess(user);
+      }, 700);
     } catch (err: any) {
-      setErrorMsg('Erro de conexão ao efetuar login.');
+      setErrorMsg(err.message || 'Credenciais inválidas. Verifique seu número e palavra-passe.');
     } finally {
       setLoading(false);
     }

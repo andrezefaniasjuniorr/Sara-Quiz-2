@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Qualification, GameMode, Question, UserProfile } from '../types';
 import { QUALIFICATIONS_LIST } from '../data/qualifications';
+import { SupabaseAuthService } from '../lib/supabase';
 import { 
   ArrowLeft, 
   Timer, 
@@ -237,25 +238,22 @@ export const QuizArena: React.FC<QuizArenaProps> = ({
     }
 
     try {
-      const res = await fetch('/api/answers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: user.id,
-          question_id: currentQuestion.id,
-          qualification: qualification,
-          selected_answer: selected,
-          correct: isCorrect,
-          points_earned: earnedPoints,
-          time_taken_seconds: timeTaken,
-        }),
+      // 100% Native Supabase Answer Recording
+      const { user_stats } = await SupabaseAuthService.recordAnswer({
+        user_id: user.id,
+        question_id: currentQuestion.id,
+        qualification: qualification,
+        selected_answer: selected,
+        correct: isCorrect,
+        points_earned: earnedPoints,
+        time_taken_seconds: timeTaken,
       });
-      const data = await res.json();
-      if (data.success && onAnswerRecorded) {
-        onAnswerRecorded(data.user_stats);
+
+      if (user_stats && onAnswerRecorded) {
+        onAnswerRecorded(user_stats);
       }
     } catch (err) {
-      console.error('Error saving answer:', err);
+      console.error('Error saving answer to Supabase:', err);
     }
   };
 

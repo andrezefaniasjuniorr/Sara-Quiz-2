@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { UserProfile, Qualification, WithdrawalRequest, MobileWallet } from '../types';
 import { QUALIFICATIONS_LIST } from '../data/qualifications';
+import { SupabaseAuthService } from '../lib/supabase';
 import { 
   User, 
   Award, 
@@ -66,16 +67,13 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
   const accuracy = user.total_answered > 0 ? Math.round((user.total_correct / user.total_answered) * 100) : 0;
 
-  // Load User Withdrawals History
+  // Load User Withdrawals History directly from Supabase
   const loadWithdrawals = async () => {
     try {
-      const res = await fetch(`/api/withdrawals/user/${user.id}`);
-      const data = await res.json();
-      if (data.withdrawals) {
-        setWithdrawals(data.withdrawals);
-      }
+      const userWithdrawals = await SupabaseAuthService.getUserWithdrawals(user.id);
+      setWithdrawals(userWithdrawals);
     } catch (err) {
-      console.error('Error fetching withdrawals:', err);
+      console.error('Error fetching withdrawals from Supabase:', err);
     }
   };
 
@@ -119,23 +117,13 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     setWithdrawLoading(true);
 
     try {
-      const res = await fetch('/api/withdrawals/request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: user.id,
-          wallet_type: walletType,
-          wallet_number: walletNumber.trim(),
-          amount_mt: mtVal,
-        }),
+      // 100% Native Supabase Withdrawal Request
+      await SupabaseAuthService.requestWithdrawal({
+        user_id: user.id,
+        wallet_type: walletType,
+        wallet_number: walletNumber.trim(),
+        amount_mt: mtVal,
       });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setWithdrawError(data.error || 'Falha ao solicitar levantamento.');
-        return;
-      }
 
       setWithdrawSuccess('Solicitação enviada com sucesso! O dinheiro irá refletir na sua conta em 2 a 3 horas.');
       loadWithdrawals();
@@ -146,7 +134,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         setWithdrawSuccess(null);
       }, 3000);
     } catch (err: any) {
-      setWithdrawError('Erro de conexão ao processar levantamento.');
+      setWithdrawError(err.message || 'Erro ao processar levantamento no Supabase.');
     } finally {
       setWithdrawLoading(false);
     }

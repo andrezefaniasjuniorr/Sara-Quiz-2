@@ -11,6 +11,7 @@ import { ChatView } from './components/ChatView';
 import { ProfileView } from './components/ProfileView';
 import { AdminPanel } from './components/AdminPanel';
 import { AuthModal } from './components/AuthModal';
+import { SupabaseAuthService } from './lib/supabase';
 
 export function App() {
   const [currentTab, setCurrentTab] = useState<
@@ -46,17 +47,16 @@ export function App() {
     }
   }, [user]);
 
-  // Refresh user data from server on mount or focus
+  // Refresh user data directly from Supabase
   const refreshUserData = async () => {
     if (!user?.id) return;
     try {
-      const res = await fetch(`/api/profile/${user.id}`);
-      const data = await res.json();
-      if (data.user) {
-        setUser(data.user);
+      const refreshed = await SupabaseAuthService.getProfile(user.id);
+      if (refreshed) {
+        setUser(refreshed);
       }
     } catch (err) {
-      console.error('Error refreshing user data:', err);
+      console.error('Error refreshing user data from Supabase:', err);
     }
   };
 
@@ -132,17 +132,12 @@ export function App() {
   }) => {
     if (!user) return;
     try {
-      const res = await fetch(`/api/profile/${user.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updated),
-      });
-      const data = await res.json();
-      if (data.success && data.user) {
-        setUser(data.user);
+      const updatedUser = await SupabaseAuthService.updateProfile(user.id, updated);
+      if (updatedUser) {
+        setUser(updatedUser);
       }
     } catch (err) {
-      console.error('Error updating profile:', err);
+      console.error('Error updating profile with Supabase:', err);
     }
   };
 
