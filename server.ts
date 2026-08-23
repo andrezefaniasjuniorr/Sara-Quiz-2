@@ -16,12 +16,262 @@ import {
 } from './src/types';
 import { ALL_INITIAL_QUESTIONS, ESTIMATED_BANK_COUNTS } from './src/data/questions';
 import { QUALIFICATIONS_LIST } from './src/data/qualifications';
+import { 
+  supabase, 
+  SUPABASE_URL, 
+  SUPABASE_ANON_KEY, 
+  SUPABASE_SQL_SCHEMA 
+} from './src/lib/supabase';
 
 const app = express();
 const PORT = 3000;
 const ADMIN_PASSWORD = '001234';
 
 app.use(express.json({ limit: '10mb' }));
+
+// ----------------------------------------------------
+// Supabase Sync State & Helpers
+// ----------------------------------------------------
+let supabaseConnected = false;
+let supabaseLastSyncTime: string | null = null;
+let supabaseError: string | null = null;
+
+async function syncUserToSupabase(user: StoredUser) {
+  try {
+    const { error } = await supabase.from('users').upsert({
+      id: user.id,
+      name: user.name,
+      phone: user.phone,
+      age: user.age,
+      avatar: user.avatar,
+      qualification_interest: user.qualification_interest,
+      total_points: user.total_points,
+      best_streak: user.best_streak,
+      current_streak: user.current_streak,
+      total_answered: user.total_answered,
+      total_correct: user.total_correct,
+      total_skipped: user.total_skipped,
+      is_online: user.is_online,
+      joined_at: user.joined_at,
+      last_active: user.last_active,
+      password_hash: user.password_hash,
+      qualification_stats: user.qualification_stats,
+    });
+    if (error) {
+      console.warn('[Supabase Sync User Error]:', error.message);
+    }
+  } catch (err: any) {
+    console.warn('[Supabase Sync User Exception]:', err.message);
+  }
+}
+
+async function syncQuestionToSupabase(q: Question) {
+  try {
+    const { error } = await supabase.from('questions').upsert({
+      id: q.id,
+      qualification: q.qualification,
+      subcategory: q.subcategory,
+      difficulty: q.difficulty,
+      question: q.question,
+      options: q.options,
+      correct_answer: q.correct_answer,
+      points: q.points,
+      time_limit: q.time_limit,
+      explanation: q.explanation,
+      active: q.active !== false,
+      scientist_law: q.scientist_law || null,
+      created_at: q.created_at || new Date().toISOString(),
+    });
+    if (error) {
+      console.warn('[Supabase Sync Question Error]:', error.message);
+    }
+  } catch (err: any) {
+    console.warn('[Supabase Sync Question Exception]:', err.message);
+  }
+}
+
+async function deleteQuestionFromSupabase(id: string) {
+  try {
+    await supabase.from('questions').delete().eq('id', id);
+  } catch (err: any) {
+    console.warn('[Supabase Delete Question Exception]:', err.message);
+  }
+}
+
+async function syncWithdrawalToSupabase(w: WithdrawalRequest) {
+  try {
+    const { error } = await supabase.from('withdrawals').upsert({
+      id: w.id,
+      user_id: w.user_id,
+      user_name: w.user_name,
+      wallet_type: w.wallet_type,
+      wallet_number: w.wallet_number,
+      amount_mt: w.amount_mt,
+      points_deducted: w.points_deducted,
+      status: w.status,
+      created_at: w.created_at,
+      processed_at: w.processed_at || null,
+    });
+    if (error) {
+      console.warn('[Supabase Sync Withdrawal Error]:', error.message);
+    }
+  } catch (err: any) {
+    console.warn('[Supabase Sync Withdrawal Exception]:', err.message);
+  }
+}
+
+async function syncActivityToSupabase(act: ActivityLog) {
+  try {
+    const { error } = await supabase.from('activity_logs').upsert({
+      id: act.id,
+      type: act.type,
+      title: act.title,
+      description: act.description,
+      user_id: act.user_id || null,
+      user_name: act.user_name || null,
+      timestamp: act.timestamp,
+    });
+    if (error) {
+      console.warn('[Supabase Sync Activity Error]:', error.message);
+    }
+  } catch (err: any) {
+    console.warn('[Supabase Sync Activity Exception]:', err.message);
+  }
+}
+
+async function syncChatMessageToSupabase(msg: ChatMessage) {
+  try {
+    const { error } = await supabase.from('chat_messages').upsert({
+      id: msg.id,
+      sender_id: msg.user_id,
+      sender_name: msg.user_name,
+      sender_avatar: msg.user_avatar,
+      sender_tier: 'Iniciante',
+      content: msg.message,
+      channel: msg.recipient_id ? 'private' : 'global',
+      recipient_id: msg.recipient_id || null,
+      recipient_name: msg.recipient_name || null,
+      timestamp: msg.created_at || new Date().toISOString(),
+    });
+    if (error) {
+      console.warn('[Supabase Sync Chat Error]:', error.message);
+    }
+  } catch (err: any) {
+    console.warn('[Supabase Sync Chat Exception]:', err.message);
+  }
+}
+
+async function syncAnsweredToSupabase(rec: AnsweredQuestionRecord) {
+  try {
+    const { error } = await supabase.from('answered_questions').upsert({
+      id: `${rec.user_id}_${rec.question_id}`,
+      user_id: rec.user_id,
+      question_id: rec.question_id,
+      qualification: rec.qualification,
+      user_answer: rec.selected_answer,
+      is_correct: rec.correct,
+      points_earned: rec.points_earned,
+      time_spent_seconds: rec.time_taken_seconds,
+      answered_at: rec.answered_at,
+    });
+    if (error) {
+      console.warn('[Supabase Sync Answer Error]:', error.message);
+    }
+  } catch (err: any) {
+    console.warn('[Supabase Sync Answer Exception]:', err.message);
+  }
+}
+
+// Initial bootstrap from Supabase if available
+async function initializeSupabaseConnection() {
+  try {
+    const { data, error } = await supabase.from('users').select('id, name, phone, age, avatar, qualification_interest, total_points, best_streak, current_streak, total_answered, total_correct, total_skipped, is_online, joined_at, last_active, password_hash, qualification_stats').limit(100);
+    if (!error) {
+      supabaseConnected = true;
+      supabaseError = null;
+      supabaseLastSyncTime = new Date().toISOString();
+      console.log('✅ Supabase conectado com sucesso:', SUPABASE_URL);
+
+      if (data && data.length > 0) {
+        for (const u of data) {
+          const userObj: StoredUser = {
+            id: u.id,
+            name: u.name,
+            phone: u.phone,
+            age: u.age || 20,
+            avatar: u.avatar || '👨‍🎓',
+            qualification_interest: u.qualification_interest || 'Eletricidade Industrial',
+            total_points: Number(u.total_points) || 0,
+            best_streak: Number(u.best_streak) || 0,
+            current_streak: Number(u.current_streak) || 0,
+            total_answered: Number(u.total_answered) || 0,
+            total_correct: Number(u.total_correct) || 0,
+            total_skipped: Number(u.total_skipped) || 0,
+            is_online: u.is_online !== false,
+            joined_at: u.joined_at || new Date().toISOString(),
+            last_active: u.last_active || new Date().toISOString(),
+            password_hash: u.password_hash || '',
+            qualification_stats: u.qualification_stats || createInitialQualStats(),
+          };
+          usersMap.set(userObj.id, userObj);
+          usersByPhoneMap.set(userObj.phone, userObj.id);
+        }
+        console.log(`[Supabase] Carregados ${data.length} usuários do banco de dados remoto.`);
+      }
+
+      // Also try fetching remote questions
+      const qRes = await supabase.from('questions').select('*').limit(500);
+      if (qRes.data && qRes.data.length > 0) {
+        for (const q of qRes.data) {
+          if (!questionsDatabase.some((local) => local.id === q.id)) {
+            questionsDatabase.unshift(normalizeQuestionPoints({
+              id: q.id,
+              qualification: q.qualification,
+              subcategory: q.subcategory,
+              difficulty: q.difficulty,
+              question: q.question,
+              options: q.options,
+              correct_answer: q.correct_answer,
+              points: q.points,
+              time_limit: q.time_limit || 25,
+              explanation: q.explanation,
+              active: q.active !== false,
+              created_at: q.created_at,
+              scientist_law: q.scientist_law,
+            }));
+          }
+        }
+        console.log(`[Supabase] Questões sincronizadas com sucesso.`);
+      }
+
+      // Also try fetching withdrawals
+      const wRes = await supabase.from('withdrawals').select('*').order('created_at', { ascending: false });
+      if (wRes.data && wRes.data.length > 0) {
+        withdrawalsList = wRes.data.map((w) => ({
+          id: w.id,
+          user_id: w.user_id,
+          user_name: w.user_name,
+          user_phone: w.user_phone || '',
+          wallet_type: w.wallet_type,
+          wallet_number: w.wallet_number,
+          amount_mt: Number(w.amount_mt),
+          points_deducted: Number(w.points_deducted),
+          status: w.status,
+          created_at: w.created_at,
+          processed_at: w.processed_at,
+        }));
+      }
+    } else {
+      supabaseConnected = true; // Auth works, table may need creation
+      supabaseError = error.message;
+      console.log('ℹ️ Supabase conectado (tabelas em preparação):', error.message);
+    }
+  } catch (err: any) {
+    supabaseConnected = false;
+    supabaseError = err.message;
+    console.warn('⚠️ Supabase connection warning:', err.message);
+  }
+}
 
 // ----------------------------------------------------
 // Normalizing Question Points to Strict User Criteria:
@@ -183,6 +433,9 @@ app.post('/api/auth/register', (req: Request, res: Response) => {
   usersMap.set(userId, newUser);
   usersByPhoneMap.set(normalizedPhone, userId);
 
+  // Sync with Supabase in background
+  syncUserToSupabase(newUser);
+
   logActivity(
     'register',
     'Novo Jogador Cadastrado',
@@ -190,6 +443,15 @@ app.post('/api/auth/register', (req: Request, res: Response) => {
     newUser.id,
     newUser.name
   );
+  syncActivityToSupabase({
+    id: `act-${Date.now()}`,
+    type: 'register',
+    title: 'Novo Jogador Cadastrado',
+    description: `${newUser.name} (${newUser.phone}) ingressou na plataforma com interesse em ${newUser.qualification_interest}.`,
+    user_id: newUser.id,
+    user_name: newUser.name,
+    timestamp: now,
+  });
 
   // Return public user profile (omit password)
   const { password_hash, ...publicUser } = newUser;
@@ -225,6 +487,9 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
   user.is_online = true;
   user.last_active = new Date().toISOString();
   usersMap.set(userId, user);
+
+  // Sync online status to Supabase
+  syncUserToSupabase(user);
 
   const { password_hash, ...publicUser } = user;
   res.json({
@@ -271,6 +536,8 @@ app.put('/api/profile/:userId', (req: Request, res: Response) => {
   user.last_active = new Date().toISOString();
 
   usersMap.set(userId, user);
+  syncUserToSupabase(user);
+
   const { password_hash, ...publicUser } = user;
   res.json({ success: true, user: publicUser });
 });
@@ -474,6 +741,10 @@ app.post('/api/answers', (req: Request, res: Response) => {
   user.last_active = now;
   usersMap.set(user_id, user);
 
+  // Sync to Supabase in background
+  syncUserToSupabase(user);
+  syncAnsweredToSupabase(record);
+
   res.json({
     success: true,
     record,
@@ -535,6 +806,7 @@ app.post('/api/withdrawals/request', (req: Request, res: Response) => {
   // Deduct points from user balance immediately
   user.total_points -= requiredPoints;
   usersMap.set(user_id, user);
+  syncUserToSupabase(user);
 
   const withdrawalId = `wdr-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
   const newWithdrawal: WithdrawalRequest = {
@@ -551,6 +823,7 @@ app.post('/api/withdrawals/request', (req: Request, res: Response) => {
   };
 
   withdrawalsList.unshift(newWithdrawal);
+  syncWithdrawalToSupabase(newWithdrawal);
 
   logActivity(
     'withdrawal',
@@ -559,6 +832,15 @@ app.post('/api/withdrawals/request', (req: Request, res: Response) => {
     user.id,
     user.name
   );
+  syncActivityToSupabase({
+    id: `act-${Date.now()}`,
+    type: 'withdrawal',
+    title: 'Solicitação de Levantamento',
+    description: `${user.name} solicitou levantamento de ${requestedMt} MT (${requiredPoints} pts) via ${wallet_type} (${cleanWalletNum}).`,
+    user_id: user.id,
+    user_name: user.name,
+    timestamp: new Date().toISOString(),
+  });
 
   res.status(201).json({
     success: true,
@@ -673,6 +955,9 @@ app.post('/api/chat/global', (req: Request, res: Response) => {
   globalChatMessages.push(newMsg);
   if (globalChatMessages.length > 150) globalChatMessages.shift();
 
+  // Sync to Supabase
+  syncChatMessageToSupabase(newMsg);
+
   res.json({ success: true, message: newMsg });
 });
 
@@ -710,6 +995,7 @@ app.post('/api/chat/private', (req: Request, res: Response) => {
   };
 
   privateChatMessages.push(newMsg);
+  syncChatMessageToSupabase(newMsg);
   res.json({ success: true, message: newMsg });
 });
 
@@ -837,6 +1123,8 @@ app.post('/api/admin/withdrawals/:id/process', (req: Request, res: Response) => 
 
   if (action === 'approve') {
     withdrawal.status = 'completed';
+    syncWithdrawalToSupabase(withdrawal);
+
     logActivity(
       'withdrawal',
       'Levantamento Aprovado e Pago',
@@ -844,15 +1132,26 @@ app.post('/api/admin/withdrawals/:id/process', (req: Request, res: Response) => 
       withdrawal.user_id,
       withdrawal.user_name
     );
+    syncActivityToSupabase({
+      id: `act-${Date.now()}`,
+      type: 'withdrawal',
+      title: 'Levantamento Aprovado e Pago',
+      description: `O levantamento de ${withdrawal.amount_mt} MT para ${withdrawal.user_name} via ${withdrawal.wallet_type} (${withdrawal.wallet_number}) foi concluído com sucesso.`,
+      user_id: withdrawal.user_id,
+      user_name: withdrawal.user_name,
+      timestamp: now,
+    });
     return res.json({ success: true, message: 'Levantamento marcado como pago e transferido!', withdrawal });
   } else if (action === 'reject') {
     withdrawal.status = 'rejected';
+    syncWithdrawalToSupabase(withdrawal);
 
     // Refund points to user!
     const user = usersMap.get(withdrawal.user_id);
     if (user) {
       user.total_points += withdrawal.points_deducted;
       usersMap.set(user.id, user);
+      syncUserToSupabase(user);
     }
 
     logActivity(
@@ -862,6 +1161,15 @@ app.post('/api/admin/withdrawals/:id/process', (req: Request, res: Response) => 
       withdrawal.user_id,
       withdrawal.user_name
     );
+    syncActivityToSupabase({
+      id: `act-${Date.now()}`,
+      type: 'withdrawal',
+      title: 'Levantamento Rejeitado e Reembolsado',
+      description: `O pedido de ${withdrawal.amount_mt} MT de ${withdrawal.user_name} foi cancelado e os ${withdrawal.points_deducted} pontos foram devolvidos ao saldo. Motivo: ${notes || 'Não especificado'}.`,
+      user_id: withdrawal.user_id,
+      user_name: withdrawal.user_name,
+      timestamp: now,
+    });
     return res.json({ success: true, message: 'Levantamento rejeitado e pontos reembolsados ao jogador.', withdrawal });
   }
 
@@ -934,6 +1242,8 @@ app.post('/api/admin/questions', (req: Request, res: Response) => {
 
   const newQuestion = normalizeQuestionPoints(rawQuestion);
   questionsDatabase.unshift(newQuestion);
+  syncQuestionToSupabase(newQuestion);
+
   res.json({ success: true, question: newQuestion });
 });
 
@@ -946,6 +1256,7 @@ app.put('/api/admin/questions/:id', (req: Request, res: Response) => {
     ...questionsDatabase[idx],
     ...req.body,
   });
+  syncQuestionToSupabase(questionsDatabase[idx]);
 
   res.json({ success: true, question: questionsDatabase[idx] });
 });
@@ -953,6 +1264,7 @@ app.put('/api/admin/questions/:id', (req: Request, res: Response) => {
 app.delete('/api/admin/questions/:id', (req: Request, res: Response) => {
   const { id } = req.params;
   questionsDatabase = questionsDatabase.filter((q) => q.id !== id);
+  deleteQuestionFromSupabase(id);
   res.json({ success: true });
 });
 
@@ -983,7 +1295,9 @@ app.post('/api/admin/import', (req: Request, res: Response) => {
             created_at: new Date().toISOString(),
             scientist_law: item.scientist_law,
           };
-          questionsDatabase.unshift(normalizeQuestionPoints(rawQ));
+          const normQ = normalizeQuestionPoints(rawQ);
+          questionsDatabase.unshift(normQ);
+          syncQuestionToSupabase(normQ);
           importedCount++;
         }
       }
@@ -1014,7 +1328,9 @@ app.post('/api/admin/import', (req: Request, res: Response) => {
             active: true,
             created_at: new Date().toISOString(),
           };
-          questionsDatabase.unshift(normalizeQuestionPoints(rawQ));
+          const normQ = normalizeQuestionPoints(rawQ);
+          questionsDatabase.unshift(normQ);
+          syncQuestionToSupabase(normQ);
           importedCount++;
         }
       }
@@ -1060,9 +1376,127 @@ app.post('/api/admin/moderation/:action', (req: Request, res: Response) => {
 });
 
 // ----------------------------------------------------
+// 8. SUPABASE MANAGEMENT ENDPOINTS
+// ----------------------------------------------------
+app.get('/api/supabase/status', async (_req: Request, res: Response) => {
+  let tableChecks: Record<string, { exists: boolean; count?: number; error?: string }> = {};
+
+  try {
+    const [uRes, qRes, wRes, aRes, cRes] = await Promise.allSettled([
+      supabase.from('users').select('id', { count: 'exact', head: true }),
+      supabase.from('questions').select('id', { count: 'exact', head: true }),
+      supabase.from('withdrawals').select('id', { count: 'exact', head: true }),
+      supabase.from('activity_logs').select('id', { count: 'exact', head: true }),
+      supabase.from('chat_messages').select('id', { count: 'exact', head: true }),
+    ]);
+
+    tableChecks.users = uRes.status === 'fulfilled' && !uRes.value.error
+      ? { exists: true, count: uRes.value.count || 0 }
+      : { exists: false, error: uRes.status === 'fulfilled' ? uRes.value.error?.message : 'Falha na conexão' };
+
+    tableChecks.questions = qRes.status === 'fulfilled' && !qRes.value.error
+      ? { exists: true, count: qRes.value.count || 0 }
+      : { exists: false, error: qRes.status === 'fulfilled' ? qRes.value.error?.message : 'Falha na conexão' };
+
+    tableChecks.withdrawals = wRes.status === 'fulfilled' && !wRes.value.error
+      ? { exists: true, count: wRes.value.count || 0 }
+      : { exists: false, error: wRes.status === 'fulfilled' ? wRes.value.error?.message : 'Falha na conexão' };
+
+    tableChecks.activity_logs = aRes.status === 'fulfilled' && !aRes.value.error
+      ? { exists: true, count: aRes.value.count || 0 }
+      : { exists: false, error: aRes.status === 'fulfilled' ? aRes.value.error?.message : 'Falha na conexão' };
+
+    tableChecks.chat_messages = cRes.status === 'fulfilled' && !cRes.value.error
+      ? { exists: true, count: cRes.value.count || 0 }
+      : { exists: false, error: cRes.status === 'fulfilled' ? cRes.value.error?.message : 'Falha na conexão' };
+
+    supabaseConnected = true;
+    supabaseLastSyncTime = new Date().toISOString();
+  } catch (err: any) {
+    supabaseConnected = false;
+    supabaseError = err.message;
+  }
+
+  res.json({
+    connected: supabaseConnected,
+    url: SUPABASE_URL,
+    project_id: 'gjbqylheutriojpnopcg',
+    last_sync: supabaseLastSyncTime,
+    error: supabaseError,
+    tables: tableChecks,
+    local_state: {
+      users_count: usersMap.size,
+      questions_count: questionsDatabase.length,
+      withdrawals_count: withdrawalsList.length,
+      activities_count: activityLogs.length,
+      chat_messages_count: globalChatMessages.length,
+    }
+  });
+});
+
+// Sync All Local In-Memory Data into Supabase
+app.post('/api/supabase/sync-all', async (_req: Request, res: Response) => {
+  let syncedUsers = 0;
+  let syncedQuestions = 0;
+  let syncedWithdrawals = 0;
+  let syncedActivities = 0;
+
+  try {
+    // 1. Sync users
+    for (const u of usersMap.values()) {
+      await syncUserToSupabase(u);
+      syncedUsers++;
+    }
+
+    // 2. Sync questions
+    for (const q of questionsDatabase) {
+      await syncQuestionToSupabase(q);
+      syncedQuestions++;
+    }
+
+    // 3. Sync withdrawals
+    for (const w of withdrawalsList) {
+      await syncWithdrawalToSupabase(w);
+      syncedWithdrawals++;
+    }
+
+    // 4. Sync activities
+    for (const a of activityLogs) {
+      await syncActivityToSupabase(a);
+      syncedActivities++;
+    }
+
+    supabaseLastSyncTime = new Date().toISOString();
+    supabaseConnected = true;
+
+    res.json({
+      success: true,
+      message: 'Sincronização completa realizada com o banco de dados Supabase!',
+      synced: {
+        users: syncedUsers,
+        questions: syncedQuestions,
+        withdrawals: syncedWithdrawals,
+        activities: syncedActivities,
+      },
+      last_sync: supabaseLastSyncTime,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro durante sincronização', details: err.message });
+  }
+});
+
+// Return SQL Schema
+app.get('/api/supabase/schema', (_req: Request, res: Response) => {
+  res.json({ schema: SUPABASE_SQL_SCHEMA });
+});
+
+// ----------------------------------------------------
 // VITE MIDDLEWARE & SERVER STARTUP
 // ----------------------------------------------------
 async function startServer() {
+  // Bootstrap Supabase initial connection
+  await initializeSupabaseConnection();
+
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },

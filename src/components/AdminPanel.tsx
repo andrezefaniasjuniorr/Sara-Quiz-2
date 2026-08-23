@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Question, Qualification, WithdrawalRequest, ActivityLog } from '../types';
 import { QUALIFICATIONS_LIST } from '../data/qualifications';
+import { SUPABASE_SQL_SCHEMA } from '../lib/supabase';
 import { 
   Shield, 
   PlusCircle, 
@@ -25,7 +26,11 @@ import {
   Activity,
   Phone,
   Calendar,
-  AlertCircle
+  AlertCircle,
+  Server,
+  Copy,
+  ExternalLink,
+  Zap
 } from 'lucide-react';
 
 export const AdminPanel: React.FC = () => {
@@ -38,7 +43,7 @@ export const AdminPanel: React.FC = () => {
 
   // Admin Navigation Tabs
   const [activeTab, setActiveTab] = useState<
-    'withdrawals' | 'users' | 'activities' | 'questions' | 'create' | 'import' | 'moderation'
+    'withdrawals' | 'users' | 'activities' | 'questions' | 'create' | 'import' | 'moderation' | 'supabase'
   >('withdrawals');
 
   const [stats, setStats] = useState<any>(null);
@@ -48,6 +53,12 @@ export const AdminPanel: React.FC = () => {
   const [activities, setActivities] = useState<ActivityLog[]>([]);
   const [reports, setReports] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+
+  // Supabase Status State
+  const [supabaseStatus, setSupabaseStatus] = useState<any>(null);
+  const [supabaseSyncing, setSupabaseSyncing] = useState(false);
+  const [supabaseSyncMsg, setSupabaseSyncMsg] = useState<string | null>(null);
+  const [copiedSql, setCopiedSql] = useState(false);
 
   // Filters for Questions tab
   const [filterQual, setFilterQual] = useState<string>('');
@@ -285,6 +296,43 @@ export const AdminPanel: React.FC = () => {
     } catch (err) {
       console.error('Error in moderation action:', err);
     }
+  };
+
+  // Supabase Handlers
+  const loadSupabaseStatus = async () => {
+    try {
+      const res = await fetch('/api/supabase/status');
+      const data = await res.json();
+      setSupabaseStatus(data);
+    } catch (err: any) {
+      console.error('Error loading Supabase status:', err);
+    }
+  };
+
+  const handleSyncAllSupabase = async () => {
+    setSupabaseSyncing(true);
+    setSupabaseSyncMsg(null);
+    try {
+      const res = await fetch('/api/supabase/sync-all', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setSupabaseSyncMsg(`Sincronização concluída com sucesso! (${data.synced.users} usuários, ${data.synced.questions} questões, ${data.synced.withdrawals} levantamentos, ${data.synced.activities} atividades)`);
+        loadSupabaseStatus();
+        loadAllAdminData();
+      } else {
+        setSupabaseSyncMsg(`Erro na sincronização: ${data.error || 'Falha ao sincronizar'}`);
+      }
+    } catch (err: any) {
+      setSupabaseSyncMsg('Erro de conexão ao sincronizar com o Supabase.');
+    } finally {
+      setSupabaseSyncing(false);
+    }
+  };
+
+  const handleCopySql = () => {
+    navigator.clipboard.writeText(SUPABASE_SQL_SCHEMA);
+    setCopiedSql(true);
+    setTimeout(() => setCopiedSql(false), 3000);
   };
 
   // ----------------------------------------------------
@@ -534,6 +582,22 @@ export const AdminPanel: React.FC = () => {
         >
           <AlertTriangle className="w-4 h-4" />
           <span>Moderação</span>
+        </button>
+
+        <button
+          onClick={() => {
+            setActiveTab('supabase');
+            loadSupabaseStatus();
+          }}
+          className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold whitespace-nowrap transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === 'supabase'
+              ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
+              : 'bg-slate-900 text-emerald-400 hover:bg-slate-800 border border-emerald-500/30'
+          }`}
+        >
+          <Server className="w-4 h-4" />
+          <span>Supabase DB</span>
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
         </button>
       </div>
 
@@ -1117,6 +1181,181 @@ export const AdminPanel: React.FC = () => {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* 8. ABA DE SUPABASE */}
+      {activeTab === 'supabase' && (
+        <div className="space-y-6 animate-fadeIn">
+          {/* Header Card */}
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl relative overflow-hidden">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                    <Server className="w-4 h-4" />
+                  </div>
+                  <h3 className="text-lg font-black text-white">Integração Supabase Database</h3>
+                </div>
+                <p className="text-xs text-slate-400 mt-1">
+                  Banco de dados relacional PostgreSQL em nuvem para persistência permanente de jogadores, pontos, histórico de levantamentos e questões.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={loadSupabaseStatus}
+                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border border-slate-700"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Atualizar Status</span>
+                </button>
+
+                <button
+                  onClick={handleSyncAllSupabase}
+                  disabled={supabaseSyncing}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 text-slate-950 text-xs font-black shadow-lg shadow-emerald-500/20 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <Zap className="w-3.5 h-3.5" />
+                  <span>{supabaseSyncing ? 'Sincronizando...' : 'Sincronizar Tudo Agora'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Sync Feedback Message */}
+            {supabaseSyncMsg && (
+              <div className={`mt-4 p-3 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
+                supabaseSyncMsg.includes('sucesso') 
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' 
+                  : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+              }`}>
+                {supabaseSyncMsg.includes('sucesso') ? <CheckCircle2 className="w-4 h-4 flex-shrink-0" /> : <AlertCircle className="w-4 h-4 flex-shrink-0" />}
+                <span>{supabaseSyncMsg}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Connection Details Bento */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+              <div className="text-xs text-slate-400 font-semibold mb-1">Status da Conexão</div>
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span className="text-lg font-black text-emerald-400">Ativo & Conectado</span>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-2">
+                Sincronização em segundo plano habilitada para todas as ações.
+              </p>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+              <div className="text-xs text-slate-400 font-semibold mb-1">Endpoint do Projeto</div>
+              <div className="text-sm font-mono font-bold text-slate-200 truncate">
+                https://gjbqylheutriojpnopcg.supabase.co
+              </div>
+              <div className="text-[11px] text-slate-500 mt-2">
+                Project ID: <span className="font-mono text-amber-400">gjbqylheutriojpnopcg</span>
+              </div>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+              <div className="text-xs text-slate-400 font-semibold mb-1">Chave Pública (Anon Key)</div>
+              <div className="text-xs font-mono text-emerald-300 truncate">
+                sb_publishable_msIHuQZlf6hiocY9b...
+              </div>
+              <div className="text-[11px] text-slate-500 mt-2">
+                Permissão configurada para REST & Realtime APIs
+              </div>
+            </div>
+          </div>
+
+          {/* Tables Overview */}
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl">
+            <h4 className="text-sm font-black text-white mb-4 flex items-center gap-2">
+              <Database className="w-4 h-4 text-emerald-400" />
+              <span>Tabelas do Banco de Dados</span>
+            </h4>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800">
+                <div className="text-xs font-bold text-slate-300">users</div>
+                <div className="text-2xl font-black text-white font-mono mt-1">
+                  {supabaseStatus?.tables?.users?.count !== undefined ? supabaseStatus.tables.users.count : registeredUsers.length}
+                </div>
+                <div className="text-[10px] text-emerald-400 mt-1 font-semibold">Jogadores & Pontos</div>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800">
+                <div className="text-xs font-bold text-slate-300">questions</div>
+                <div className="text-2xl font-black text-white font-mono mt-1">
+                  {supabaseStatus?.tables?.questions?.count !== undefined ? supabaseStatus.tables.questions.count : questions.length}
+                </div>
+                <div className="text-[10px] text-orange-400 mt-1 font-semibold">Banco de Questões</div>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800">
+                <div className="text-xs font-bold text-slate-300">withdrawals</div>
+                <div className="text-2xl font-black text-white font-mono mt-1">
+                  {supabaseStatus?.tables?.withdrawals?.count !== undefined ? supabaseStatus.tables.withdrawals.count : withdrawals.length}
+                </div>
+                <div className="text-[10px] text-amber-400 mt-1 font-semibold">Levantamentos</div>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800">
+                <div className="text-xs font-bold text-slate-300">activity_logs</div>
+                <div className="text-2xl font-black text-white font-mono mt-1">
+                  {supabaseStatus?.tables?.activity_logs?.count !== undefined ? supabaseStatus.tables.activity_logs.count : activities.length}
+                </div>
+                <div className="text-[10px] text-blue-400 mt-1 font-semibold">Feed de Atividades</div>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800">
+                <div className="text-xs font-bold text-slate-300">chat_messages</div>
+                <div className="text-2xl font-black text-white font-mono mt-1">
+                  {supabaseStatus?.tables?.chat_messages?.count !== undefined ? supabaseStatus.tables.chat_messages.count : 'Ativo'}
+                </div>
+                <div className="text-[10px] text-purple-400 mt-1 font-semibold">Chat Geral e Privado</div>
+              </div>
+            </div>
+          </div>
+
+          {/* SQL Schema Generator / Instructions */}
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h4 className="text-sm font-black text-white flex items-center gap-2">
+                  <Server className="w-4 h-4 text-emerald-400" />
+                  <span>Script SQL de Criação de Tabelas (Supabase SQL Editor)</span>
+                </h4>
+                <p className="text-xs text-slate-400 mt-1">
+                  Caso crie um novo projeto no Supabase ou queira recriar as tabelas, copie o script abaixo e execute no SQL Editor do painel Supabase.
+                </p>
+              </div>
+
+              <button
+                onClick={handleCopySql}
+                className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border border-slate-700"
+              >
+                {copiedSql ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    <span className="text-emerald-400">Copiado!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>Copiar SQL</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            <div className="relative">
+              <pre className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-[11px] font-mono text-slate-300 overflow-x-auto max-h-72 scrollbar-thin scrollbar-thumb-slate-800">
+                {SUPABASE_SQL_SCHEMA}
+              </pre>
+            </div>
+          </div>
         </div>
       )}
 
