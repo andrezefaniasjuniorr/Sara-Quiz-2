@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
+import { GoogleGenAI } from '@google/genai';
 import { 
   Question, 
   Qualification, 
@@ -1033,6 +1034,153 @@ app.post('/api/chat/block', (req: Request, res: Response) => {
   }
   blockedUsersMap.get(user_id)!.add(block_user_id);
   res.json({ success: true, blocked_user_id: block_user_id });
+});
+
+// ----------------------------------------------------
+// 6.1 SARA AI ASSISTANT ENDPOINT
+// ----------------------------------------------------
+let geminiClient: GoogleGenAI | null = null;
+
+function getGeminiClient(): GoogleGenAI | null {
+  if (!geminiClient && process.env.GEMINI_API_KEY) {
+    geminiClient = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    });
+  }
+  return geminiClient;
+}
+
+// Fallback intelligent answers for basic questions when Gemini API key is missing or network unavailable
+function generateSaraFallbackAnswer(message: string, userName?: string): string {
+  const lower = message.toLowerCase();
+  const name = userName || 'Colega';
+
+  if (lower.includes('ola') || lower.includes('olá') || lower.includes('oi') || lower.includes('bom dia') || lower.includes('boa tarde') || lower.includes('boa noite')) {
+    return `Olá, ${name}! Sou a Sara, sua assistente e tutora virtual no Sara Quiz. Como posso te ajudar hoje nos estudos técnicos ou com as regras da plataforma?`;
+  }
+  if (lower.includes('quem e voce') || lower.includes('quem és') || lower.includes('quem é você') || lower.includes('apresente-se')) {
+    return `Eu sou a Sara, assistente e tutora inteligente do Sara Quiz! Estou aqui para te ajudar a tirar dúvidas de matérias técnicas (Eletricidade, Mecânica, Construção, Contabilidade, Gestão, Ensino Geral e Informática), dar dicas de estudo e explicar as regras do jogo e dos saques.`;
+  }
+  if (lower.includes('como funciona') || lower.includes('regras') || lower.includes('como jogar') || lower.includes('pontos')) {
+    return `No Sara Quiz você responde a questões técnicas reais:\n• Cada acerto dá pontos (Fácil: 15 pts, Médio: 35 pts, Difícil/Especial: 75 pts).\n• Pular questão tem taxa de -5 pontos.\n• Resposta incorreta desconta taxa de 5 a 20 MT (10 a 40 pts).\n• 2 Pontos = 1 Metical (MT).\n• O ranking é atualizado em tempo real para todos os jogadores cadastrados!`;
+  }
+  if (lower.includes('saque') || lower.includes('levantamento') || lower.includes('m-pesa') || lower.includes('emola') || lower.includes('e-mola') || lower.includes('dinheiro') || lower.includes('pagamento')) {
+    return `Para solicitar um levantamento:\n1. O valor mínimo é de 1.000 MT (equivalente a 2.000 pontos acumulados).\n2. Acesse a aba 'Perfil' e insira seu número de M-Pesa ou E-Mola.\n3. O valor é transferido em um prazo médio de 2 a 3 horas após aprovação administrativa.`;
+  }
+  if (lower.includes('ohm') || lower.includes('lei de ohm') || lower.includes('eletricidade') || lower.includes('voltagem') || lower.includes('amperagem') || lower.includes('resistencia') || lower.includes('corrente')) {
+    return `A 1ª Lei de Ohm define que a Tensão (V) é igual à Corrente (I) multiplicada pela Resistência (R): V = I × R. A potência elétrica é calculada por P = V × I (em Watts). Lembre-se sempre de respeitar as normas de segurança ao manusear circuitos!`;
+  }
+  if (lower.includes('mecanica') || lower.includes('motor') || lower.includes('torque') || lower.includes('rosca') || lower.includes('engrenagem')) {
+    return `Em Mecânica Industrial:\n• Torque = Força × Braço de Alavanca (N·m).\n• Relação de transmissão em engrenagens: i = Z2 / Z1 = n1 / n2.\n• A lubrificação periódica e o alinhamento de eixos evitam vibração excessiva e desgaste prematuro dos rolamentos.`;
+  }
+  if (lower.includes('construcao') || lower.includes('betão') || lower.includes('concreto') || lower.includes('cimento') || lower.includes('alvenaria')) {
+    return `Na Construção Civil:\n• O traço comum de concreto estrutural é 1 : 2 : 3 (Cimento : Areia : Brita) com relação água/cimento controlada.\n• A cura úmida mínima nos primeiros 7 dias é fundamental para atingir a resistência de projeto (fck).`;
+  }
+  if (lower.includes('contabilidade') || lower.includes('debito') || lower.includes('crédito') || lower.includes('ativo') || lower.includes('passivo') || lower.includes('patrimonio')) {
+    return `Na Contabilidade:\n• Equação Fundamental: Ativo = Passivo + Patrimônio Líquido.\n• No método das partidas dobradas, para cada débito há um crédito de igual valor. As contas de Ativo aumentam a Débito e diminuem a Crédito.`;
+  }
+  if (lower.includes('informatica') || lower.includes('computador') || lower.includes('ip') || lower.includes('rede') || lower.includes('software') || lower.includes('programacao')) {
+    return `Em Informática e Tecnologia:\n• Um endereço IPv4 é composto por 32 bits (4 octetos decimais, ex: 192.168.1.1).\n• O protocolo TCP garante a entrega ordenada e confiável dos pacotes, enquanto o UDP prioriza velocidade sem confirmação.`;
+  }
+  if (lower.includes('dica') || lower.includes('ganhar mais') || lower.includes('estudar') || lower.includes('aprender')) {
+    return `Dica da Sara:\n1. Mantenha sequências de acertos (streak) para maximizar sua confiança.\n2. Se tiver dúvida em uma questão muito difícil, revise a explicação técnica após responder.\n3. Explore todos os módulos de qualificações para subir no Ranking Global!`;
+  }
+
+  return `Entendi sua pergunta, ${name}! Posso te explicar matérias de Eletricidade, Mecânica, Construção Civil, Contabilidade, Gestão, Ensino Geral e Informática, além de te ajudar a entender as regras do Sara Quiz e como sacar seus Meticais. O que você gostaria de saber com mais detalhes?`;
+}
+
+// Endpoint POST /api/chat/sara
+app.post('/api/chat/sara', async (req: Request, res: Response) => {
+  const { message, user_id, user_name, user_qualification, history } = req.body;
+
+  if (!message || typeof message !== 'string' || message.trim().length === 0) {
+    return res.status(400).json({ error: 'Mensagem vazia' });
+  }
+
+  const promptText = message.trim();
+  const userName = user_name || 'Jogador';
+  const qualInterest = user_qualification || 'Geral';
+
+  const systemInstruction = `Você é a Sara, a Tutora e Assistente Virtual Inteligente oficial da plataforma "Sara Quiz" em Moçambique.
+Seu objetivo é ser acolhedora, amigável, clara, didática e motivadora com os estudantes e profissionais.
+Você responde perguntas básicas de conhecimento geral (ciência, história, língua portuguesa, matemática) e dúvidas técnicas de qualquer uma das qualificações do Sara Quiz:
+1. Eletricidade Industrial (Leis de Ohm, Kirchhoff, motores, comandos elétricos, segurança).
+2. Mecânica Industrial (hidráulica, pneumática, usinagem, manutenção, termodinâmica).
+3. Construção Civil (estruturas, concreto/betão armado, topografia, alvenaria, instalações).
+4. Contabilidade & Finanças (débito/crédito, balanço patrimonial, DRE, IFRS/NIRF em Moçambique).
+5. Gestão & Liderança (administração, gestão de pessoas, logística, qualidade).
+6. Ensino Geral (conhecimentos fundamentais, biologia, química, física, língua).
+7. Informática & Tecnologia (redes, computadores, sistemas, segurança cibernética, lógica).
+
+Regras da plataforma Sara Quiz para informar se perguntado:
+- Conversão: 2 Pontos = 1 Metical (MT) (ou seja, 1 MT = 2 Pontos).
+- Levantamento mínimo: 1.000 MT (2.000 pontos acumulados) via M-Pesa ou E-Mola no prazo de 2 a 3 horas.
+- Pontuação de acerto: Fácil (15 pts), Médio (35 pts), Difícil/Especial (75 pts).
+- Penalidades: Pular questão desconta 5 pontos (-5 pts). Errar questão aplica taxa de 5 a 20 MT (-10 a -40 pts).
+- O usuário atual se chama: ${userName} e tem foco em: ${qualInterest}.
+Responda sempre em Português de forma direta, encorajadora e estruturada (use bullet points se for listar passos ou conceitos).`;
+
+  try {
+    const ai = getGeminiClient();
+    if (ai) {
+      let response;
+      try {
+        response = await ai.models.generateContent({
+          model: 'gemini-3.7-flash',
+          contents: promptText,
+          config: {
+            systemInstruction,
+            temperature: 0.7,
+            maxOutputTokens: 600,
+          },
+        });
+      } catch (e: any) {
+        console.warn('Retrying with gemini-3.6-flash:', e?.message);
+        response = await ai.models.generateContent({
+          model: 'gemini-3.6-flash',
+          contents: promptText,
+          config: {
+            systemInstruction,
+            temperature: 0.7,
+            maxOutputTokens: 600,
+          },
+        });
+      }
+
+      const responseText = response.text || generateSaraFallbackAnswer(promptText, userName);
+      return res.json({
+        success: true,
+        reply: responseText,
+        sender: 'Sara (Tutora IA)',
+        timestamp: new Date().toISOString(),
+      });
+    }
+  } catch (err: any) {
+    console.warn('Gemini API call failed, falling back to local Sara engine:', err?.message);
+  }
+
+  // Fallback response
+  const fallbackReply = generateSaraFallbackAnswer(promptText, userName);
+  return res.json({
+    success: true,
+    reply: fallbackReply,
+    sender: 'Sara (Tutora IA)',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// Endpoint GET /api/users/all-registered (Returns all registered users for ranking and chat discovery)
+app.get('/api/users/all-registered', (_req: Request, res: Response) => {
+  const usersList = Array.from(usersMap.values()).map((u) => {
+    const { password_hash, ...safeUser } = u;
+    return safeUser;
+  });
+  res.json({ success: true, count: usersList.length, users: usersList });
 });
 
 // ----------------------------------------------------

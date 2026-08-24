@@ -28,7 +28,7 @@ import {
 
 interface ProfileViewProps {
   user: UserProfile;
-  onUpdateProfile: (updated: { name?: string; avatar?: string; qualification_interest?: Qualification; age?: number }) => void;
+  onUpdateProfile: (updated: { name?: string; avatar?: string; qualification_interest?: Qualification; age?: number; phone?: string }) => void;
   onSelectQualificationToPlay: (qual: Qualification) => void;
   onLogout: () => void;
   onUserRefresh?: () => void;
@@ -45,6 +45,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(user.name);
+  const [editPhone, setEditPhone] = useState(user.phone || '');
   const [editAvatar, setEditAvatar] = useState(user.avatar);
   const [editAge, setEditAge] = useState(user.age || 20);
   const [editQual, setEditQual] = useState<Qualification>(user.qualification_interest || 'Eletricidade Industrial');
@@ -80,11 +81,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   useEffect(() => {
     loadWithdrawals();
     setWalletNumber(user.phone || '');
-  }, [user.id, user.phone]);
+    setEditPhone(user.phone || '');
+    setEditName(user.name || '');
+    setEditAge(user.age || 20);
+  }, [user.id, user.phone, user.name, user.age]);
 
   const handleSave = () => {
     onUpdateProfile({
       name: editName.trim() || user.name,
+      phone: editPhone.trim() || user.phone,
       avatar: editAvatar,
       age: Number(editAge) || user.age,
       qualification_interest: editQual,
@@ -204,7 +209,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           <div className="mt-6 pt-6 border-t border-slate-800 animate-fadeIn">
             <h3 className="text-sm font-bold text-white mb-3">Atualizar Informações Pessoais</h3>
             
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-4">
               <div>
                 <label className="text-xs text-slate-400 font-semibold block mb-1.5">Nome Completo:</label>
                 <input
@@ -212,6 +217,17 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
                   maxLength={40}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-750 focus:border-amber-400 rounded-xl text-xs sm:text-sm text-slate-100 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-400 font-semibold block mb-1.5">Número de Celular:</label>
+                <input
+                  type="tel"
+                  value={editPhone}
+                  onChange={(e) => setEditPhone(e.target.value)}
+                  placeholder="Ex: +258 84 123 4567"
                   className="w-full px-3 py-2 bg-slate-950 border border-slate-750 focus:border-amber-400 rounded-xl text-xs sm:text-sm text-slate-100 focus:outline-none"
                 />
               </div>

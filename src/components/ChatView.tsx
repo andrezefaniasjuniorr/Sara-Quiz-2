@@ -17,12 +17,35 @@ import {
   Search,
   MoreVertical,
   X,
-  Reply
+  Reply,
+  Bot,
+  Sparkles,
+  Zap,
+  HelpCircle,
+  BookOpen
 } from 'lucide-react';
 
 interface ChatViewProps {
   user: UserProfile;
 }
+
+interface PeerItem {
+  id: string;
+  name: string;
+  avatar: string;
+  qualification: string;
+  isOnline: boolean;
+}
+
+const SARA_SUGGESTIONS = [
+  '⚡ O que é a Lei de Ohm e como calcular?',
+  '💰 Como funciona o levantamento via M-Pesa e E-Mola?',
+  '⚙️ Qual a fórmula de torque e rendimento mecânico?',
+  '💻 O que é o modelo OSI e endereço IP?',
+  '📊 O que é Débito e Crédito na contabilidade?',
+  '📐 Qual o traço ideal para concreto estrutural?',
+  '🏆 Como funciona a pontuação e taxa de erro no Sara Quiz?',
+];
 
 export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
   const [activeTab, setActiveTab] = useState<'global' | 'private'>('global');
@@ -33,10 +56,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
   const [cooldown, setCooldown] = useState(0);
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
 
-  // Private chat peer selection
-  const [selectedPeerId, setSelectedPeerId] = useState<string>('user-eletro-mestre');
-  const [selectedPeerName, setSelectedPeerName] = useState<string>('Carlos Eletrotécnico');
-  const [selectedPeerAvatar, setSelectedPeerAvatar] = useState<string>('👨‍🔧');
+  // Peers list from Supabase / server
+  const [peers, setPeers] = useState<PeerItem[]>([]);
+  const [peerSearchTerm, setPeerSearchTerm] = useState('');
+  const [selectedPeerId, setSelectedPeerId] = useState<string>('sara-ai-assistant');
+  const [selectedPeerName, setSelectedPeerName] = useState<string>('Sara (Tutora IA)');
+  const [selectedPeerAvatar, setSelectedPeerAvatar] = useState<string>('🤖');
+  const [isSaraTyping, setIsSaraTyping] = useState(false);
 
   // Reporting modal
   const [reportingTarget, setReportingTarget] = useState<ChatMessage | null>(null);
@@ -46,16 +72,17 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // List of other players for private chat
-  const AVAILABLE_PEERS = [
-    { id: 'user-eletro-mestre', name: 'Carlos Eletrotécnico', avatar: '👨‍🔧', qualification: 'Eletricidade Industrial' as Qualification, isOnline: true },
-    { id: 'user-tech-joao', name: 'João Developer', avatar: '👨‍💻', qualification: 'Informática & Tecnologia' as Qualification, isOnline: true },
-    { id: 'user-mec-ana', name: 'Engª. Ana Valente', avatar: '👩‍🔧', qualification: 'Mecânica Industrial' as Qualification, isOnline: true },
-    { id: 'user-civil-mateus', name: 'Mateus Construtor', avatar: '👷‍♂️', qualification: 'Construção Civil' as Qualification, isOnline: true },
-    { id: 'user-geral-fatima', name: 'Profª. Fátima Mondlane', avatar: '👩‍🏫', qualification: 'Ensino Geral' as Qualification, isOnline: true },
-    { id: 'user-cont-lucia', name: 'Dra. Lúcia Contábil', avatar: '👩‍💼', qualification: 'Contabilidade' as Qualification, isOnline: false },
-    { id: 'user-gest-antonio', name: 'António Gestor', avatar: '🧑‍💼', qualification: 'Gestão' as Qualification, isOnline: true },
-  ];
+  // Load Peers List
+  const loadPeers = async () => {
+    try {
+      const fetchedPeers = await SupabaseDB.getPeers(user.id);
+      if (fetchedPeers && fetchedPeers.length > 0) {
+        setPeers(fetchedPeers as PeerItem[]);
+      }
+    } catch (err) {
+      console.warn('Error loading peers:', err);
+    }
+  };
 
   // Load Global Chat Messages
   const loadGlobalMessages = async () => {
@@ -79,6 +106,33 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
   // Load Private Chat Messages
   const loadPrivateMessages = async () => {
     if (!selectedPeerId) return;
+
+    if (selectedPeerId === 'sara-ai-assistant') {
+      // Load Sara chat from local cache
+      try {
+        const saved = localStorage.getItem(`sara_ai_chat_${user.id}`);
+        if (saved) {
+          setPrivateMessages(JSON.parse(saved));
+          return;
+        }
+      } catch {}
+
+      // Initial welcome message from Sara
+      const welcome: ChatMessage = {
+        id: 'sara-welcome-msg',
+        user_id: 'sara-ai-assistant',
+        user_name: 'Sara (Tutora IA)',
+        user_avatar: '🤖',
+        user_qualification: 'Informática & Tecnologia' as Qualification,
+        message: `Olá, ${user.name}! 👋 Eu sou a Sara, sua assistente inteligente e tutora técnica no Sara Quiz. Estou aqui para te ajudar com dúvidas em qualquer qualificação (Eletricidade, Mecânica, Construção, Gestão, Contabilidade, Informática e Ensino Geral) ou explicar como funciona o jogo e as retiradas em Meticais (MT)! Como posso te ajudar hoje?`,
+        created_at: new Date().toISOString(),
+        reported: false,
+        report_count: 0,
+      };
+      setPrivateMessages([welcome]);
+      return;
+    }
+
     try {
       const messages = await SupabaseDB.getPrivateMessages(user.id, selectedPeerId);
       if (messages) {
@@ -88,6 +142,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
       console.error('Error fetching private chat from Supabase:', err);
     }
   };
+
+  useEffect(() => {
+    loadPeers();
+  }, [user.id]);
 
   // Realtime subscription for Global Chat Messages
   useEffect(() => {
@@ -102,18 +160,17 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
           const newRow = payload.new as any;
           if (newRow && !newRow.is_private) {
             setGlobalMessages((prev) => {
-              // Avoid duplicates
               if (prev.some((m) => m.id === newRow.id)) return prev;
               return [
                 ...prev,
                 {
                   id: newRow.id,
-                  user_id: newRow.user_id,
-                  user_name: newRow.user_name || 'Anônimo',
-                  user_avatar: newRow.user_avatar || '🧑‍🎓',
-                  user_qualification: newRow.user_qualification || 'Geral',
-                  message: newRow.message,
-                  created_at: newRow.created_at || new Date().toISOString(),
+                  user_id: newRow.user_id || newRow.sender_id,
+                  user_name: newRow.user_name || newRow.sender_name || 'Jogador',
+                  user_avatar: newRow.user_avatar || newRow.sender_avatar || '🧑‍🎓',
+                  user_qualification: (newRow.user_qualification || 'Eletricidade Industrial') as Qualification,
+                  message: newRow.content || newRow.message || '',
+                  created_at: newRow.created_at || newRow.timestamp || new Date().toISOString(),
                 },
               ];
             });
@@ -133,15 +190,17 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
   useEffect(() => {
     if (activeTab === 'private') {
       loadPrivateMessages();
-      const interval = setInterval(loadPrivateMessages, 3000);
-      return () => clearInterval(interval);
+      if (selectedPeerId !== 'sara-ai-assistant') {
+        const interval = setInterval(loadPrivateMessages, 3000);
+        return () => clearInterval(interval);
+      }
     }
   }, [activeTab, selectedPeerId, user.id]);
 
   // Scroll to bottom when messages update
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [globalMessages, privateMessages, activeTab]);
+  }, [globalMessages, privateMessages, activeTab, isSaraTyping]);
 
   // Anti-spam cooldown timer
   useEffect(() => {
@@ -151,9 +210,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
     }
   }, [cooldown]);
 
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputMessage.trim() || isSending || cooldown > 0) return;
+  const handleSendMessage = async (e?: React.FormEvent, customText?: string) => {
+    if (e) e.preventDefault();
+    const textToSend = (customText || inputMessage).trim();
+    if (!textToSend || isSending || cooldown > 0) return;
 
     setIsSending(true);
 
@@ -172,26 +232,118 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
           user_name: user.name,
           user_avatar: user.avatar,
           user_qualification: user.qualification_interest || 'Eletricidade Industrial',
-          message: inputMessage.trim(),
+          message: textToSend,
           reply_to: replyPayload,
         });
         setGlobalMessages((prev) => [...prev, newMsg]);
         setInputMessage('');
         setReplyingTo(null);
-        setCooldown(3); // 3 seconds anti-spam cooldown
+        setCooldown(2);
+
+        // If user tagged @Sara or @sara in global chat, trigger Sara to reply in global chat!
+        if (textToSend.toLowerCase().includes('@sara') || textToSend.toLowerCase().startsWith('sara,')) {
+          setTimeout(async () => {
+            try {
+              const cleanPrompt = textToSend.replace(/@sara/gi, '').trim();
+              const saraResponse = await SupabaseDB.askSaraAssistant({
+                message: cleanPrompt,
+                user_id: user.id,
+                user_name: user.name,
+                user_qualification: user.qualification_interest,
+              });
+
+              const saraGlobalMsg = await SupabaseDB.sendGlobalMessage({
+                user_id: 'sara-ai-assistant',
+                user_name: 'Sara (Tutora IA)',
+                user_avatar: '🤖',
+                user_qualification: 'Assistente Inteligente & Tutora Oficial' as any,
+                message: saraResponse.reply,
+                reply_to: {
+                  id: newMsg.id,
+                  user_name: user.name,
+                  message: newMsg.message,
+                },
+              });
+              setGlobalMessages((prev) => [...prev, saraGlobalMsg]);
+            } catch {}
+          }, 1200);
+        }
       } else {
-        const newPriv = await SupabaseDB.sendPrivateMessage({
-          sender_id: user.id,
-          sender_name: user.name,
-          sender_avatar: user.avatar,
-          recipient_id: selectedPeerId,
-          recipient_name: selectedPeerName,
-          message: inputMessage.trim(),
-          reply_to: replyPayload,
-        });
-        setPrivateMessages((prev) => [...prev, newPriv]);
-        setInputMessage('');
-        setReplyingTo(null);
+        // Private Chat
+        if (selectedPeerId === 'sara-ai-assistant') {
+          const userMsg: ChatMessage = {
+            id: `pmsg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            user_id: user.id,
+            user_name: user.name,
+            user_avatar: user.avatar,
+            user_qualification: user.qualification_interest,
+            recipient_id: 'sara-ai-assistant',
+            recipient_name: 'Sara (Tutora IA)',
+            message: textToSend,
+            reply_to: replyPayload,
+            created_at: new Date().toISOString(),
+            reported: false,
+            report_count: 0,
+          };
+
+          const updatedList = [...privateMessages, userMsg];
+          setPrivateMessages(updatedList);
+          setInputMessage('');
+          setReplyingTo(null);
+          setIsSaraTyping(true);
+
+          try {
+            localStorage.setItem(`sara_ai_chat_${user.id}`, JSON.stringify(updatedList.slice(-60)));
+          } catch {}
+
+          // Call Sara AI
+          try {
+            const aiRes = await SupabaseDB.askSaraAssistant({
+              message: textToSend,
+              user_id: user.id,
+              user_name: user.name,
+              user_qualification: user.qualification_interest,
+            });
+
+            const saraMsg: ChatMessage = {
+              id: `sara-reply-${Date.now()}`,
+              user_id: 'sara-ai-assistant',
+              user_name: 'Sara (Tutora IA)',
+              user_avatar: '🤖',
+              user_qualification: 'Informática & Tecnologia' as Qualification,
+              recipient_id: user.id,
+              recipient_name: user.name,
+              message: aiRes.reply,
+              created_at: new Date().toISOString(),
+              reported: false,
+              report_count: 0,
+            };
+
+            const finalList = [...updatedList, saraMsg];
+            setPrivateMessages(finalList);
+            try {
+              localStorage.setItem(`sara_ai_chat_${user.id}`, JSON.stringify(finalList.slice(-60)));
+            } catch {}
+          } catch (aiErr) {
+            console.warn('Sara AI error:', aiErr);
+          } finally {
+            setIsSaraTyping(false);
+          }
+        } else {
+          // Regular peer private message
+          const newPriv = await SupabaseDB.sendPrivateMessage({
+            sender_id: user.id,
+            sender_name: user.name,
+            sender_avatar: user.avatar,
+            recipient_id: selectedPeerId,
+            recipient_name: selectedPeerName,
+            message: textToSend,
+            reply_to: replyPayload,
+          });
+          setPrivateMessages((prev) => [...prev, newPriv]);
+          setInputMessage('');
+          setReplyingTo(null);
+        }
       }
     } catch (err) {
       console.error('Error sending message to Supabase:', err);
@@ -227,6 +379,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
     setPrivateMessages((prev) => prev.filter((m) => m.user_id !== targetUserId));
   };
 
+  const filteredPeers = peers.filter((p) =>
+    p.name.toLowerCase().includes(peerSearchTerm.toLowerCase()) ||
+    p.qualification.toLowerCase().includes(peerSearchTerm.toLowerCase())
+  );
+
   return (
     <div id="screen-chat" className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 animate-fadeIn">
       
@@ -235,13 +392,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
         <div>
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-bold uppercase tracking-wider mb-2">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Comunidade em Tempo Real</span>
+            <span>Comunidade & Tutoria Inteligente</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-black text-white">
-            Sala de <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-orange-400">Conversação</span>
+            Sala de <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-orange-400">Conversação & Sara IA</span>
           </h1>
           <p className="text-xs sm:text-sm text-slate-400">
-            Conecte-se com estudantes e profissionais de todas as qualificações.
+            Converse com todos os usuários cadastrados e tire dúvidas técnicas com a <strong>Sara (Tutora IA)</strong>.
           </p>
         </div>
 
@@ -269,25 +426,38 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            <User className="w-4 h-4" />
-            <span>👤 Chat Privado</span>
+            <Bot className="w-4 h-4" />
+            <span>💬 Privado & Sara IA</span>
           </button>
         </div>
       </div>
 
       {/* Main Chat Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl h-[620px]">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl h-[660px]">
         
-        {/* Left Sidebar (Private Contacts list if private tab, or Online Active Players if global) */}
+        {/* Left Sidebar (Contacts list & Peer Directory) */}
         <div className="hidden lg:flex flex-col border-r border-slate-800 bg-slate-950/50 p-4">
-          <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center justify-between">
-            <span>{activeTab === 'global' ? 'Jogadores Conectados' : 'Conversas Privadas'}</span>
+          <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center justify-between">
+            <span>Usuários & Tutora IA</span>
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
           </div>
 
+          {/* Search peer */}
+          <div className="relative mb-3">
+            <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              placeholder="Buscar usuário ou matéria..."
+              value={peerSearchTerm}
+              onChange={(e) => setPeerSearchTerm(e.target.value)}
+              className="w-full pl-8 pr-3 py-1.5 bg-slate-900 border border-slate-800 rounded-xl text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-400/80"
+            />
+          </div>
+
           <div className="flex-1 overflow-y-auto space-y-2 pr-1 scrollbar-thin scrollbar-thumb-slate-800">
-            {AVAILABLE_PEERS.map((peer) => {
+            {filteredPeers.map((peer) => {
               const isSelected = activeTab === 'private' && selectedPeerId === peer.id;
+              const isSara = peer.id === 'sara-ai-assistant';
 
               return (
                 <div
@@ -298,9 +468,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
                     setSelectedPeerAvatar(peer.avatar);
                     if (activeTab === 'global') setActiveTab('private');
                   }}
-                  className={`p-2.5 rounded-xl border transition-all cursor-pointer flex items-center gap-3 ${
+                  className={`p-2.5 rounded-2xl border transition-all cursor-pointer flex items-center gap-3 ${
                     isSelected
-                      ? 'bg-amber-500/10 border-amber-500/40 text-white'
+                      ? isSara 
+                        ? 'bg-gradient-to-r from-amber-500/20 to-orange-500/20 border-amber-500 text-white shadow-md shadow-amber-500/10'
+                        : 'bg-amber-500/10 border-amber-500/40 text-white'
+                      : isSara
+                      ? 'bg-slate-900/90 border-amber-500/30 hover:border-amber-400 text-amber-200'
                       : 'bg-slate-900/60 border-slate-850 hover:bg-slate-850/80 text-slate-300'
                   }`}
                 >
@@ -311,16 +485,22 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h4 className="text-xs font-bold truncate text-slate-200">{peer.name}</h4>
-                    <span className="text-[10px] text-slate-500 truncate block">{peer.qualification}</span>
+                    <div className="flex items-center justify-between gap-1">
+                      <h4 className={`text-xs font-bold truncate ${isSara ? 'text-amber-400 flex items-center gap-1' : 'text-slate-200'}`}>
+                        {peer.name}
+                        {isSara && <Sparkles className="w-3 h-3 text-amber-400 shrink-0" />}
+                      </h4>
+                    </div>
+                    <span className="text-[10px] text-slate-400 truncate block">{peer.qualification}</span>
                   </div>
                 </div>
               );
             })}
           </div>
 
-          <div className="pt-3 border-t border-slate-800/80 text-[11px] text-slate-500 text-center">
-            🔒 Mensagens protegidas e anônimas
+          <div className="pt-3 border-t border-slate-800/80 text-[11px] text-slate-400 text-center flex items-center justify-center gap-1">
+            <Sparkles className="w-3 h-3 text-amber-400" />
+            <span>Dica: Use <strong>@Sara</strong> no Chat Global</span>
           </div>
         </div>
 
@@ -328,43 +508,89 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
         <div className="lg:col-span-3 flex flex-col h-full bg-slate-900/70">
           
           {/* Channel Header */}
-          <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/90">
+          <div className="p-3.5 sm:p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/90">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-xl">
+              <div className="w-10 h-10 rounded-2xl bg-slate-800 border border-slate-750 flex items-center justify-center text-xl shrink-0 shadow-inner">
                 {activeTab === 'global' ? '🌎' : selectedPeerAvatar}
               </div>
               <div>
-                <h3 className="font-bold text-white text-sm">
-                  {activeTab === 'global' ? 'Canal Geral de Discussão Técnica' : selectedPeerName}
+                <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                  <span>{activeTab === 'global' ? 'Canal Geral de Discussão & Dúvidas' : selectedPeerName}</span>
+                  {selectedPeerId === 'sara-ai-assistant' && activeTab === 'private' && (
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-extrabold flex items-center gap-1">
+                      <Sparkles className="w-2.5 h-2.5" />
+                      IA OFICIAL
+                    </span>
+                  )}
                 </h3>
                 <span className="text-[11px] text-slate-400">
                   {activeTab === 'global'
-                    ? 'Todos os membros podem ler e interagir respeitosamente'
-                    : 'Mensagem privada de usuário para usuário'}
+                    ? 'Todos os usuários cadastrados podem ler e interagir. Mencione @Sara para pedir ajuda à IA.'
+                    : selectedPeerId === 'sara-ai-assistant'
+                    ? 'Tire dúvidas conceituais de qualquer disciplina técnica ou tire dúvidas do jogo!'
+                    : 'Conversa privada 100% segura entre usuários cadastrados.'}
                 </span>
               </div>
             </div>
 
-            {activeTab === 'global' && (
-              <span className="text-xs px-2.5 py-1 rounded-md bg-slate-800 text-slate-400 border border-slate-700">
-                Livre de spam
-              </span>
+            {selectedPeerId === 'sara-ai-assistant' && activeTab === 'private' && (
+              <button
+                onClick={() => {
+                  setPrivateMessages([]);
+                  try {
+                    localStorage.removeItem(`sara_ai_chat_${user.id}`);
+                  } catch {}
+                  loadPrivateMessages();
+                }}
+                className="text-[11px] px-2.5 py-1 rounded-xl bg-slate-800 text-slate-400 hover:text-amber-300 hover:bg-slate-750 border border-slate-700 transition-all cursor-pointer"
+              >
+                Limpar Chat
+              </button>
             )}
           </div>
 
+          {/* Quick Suggestions Chips (Especially active when chatting with Sara) */}
+          {(selectedPeerId === 'sara-ai-assistant' || activeTab === 'global') && (
+            <div className="px-4 py-2 bg-slate-950/60 border-b border-slate-800/80 flex items-center gap-1.5 overflow-x-auto scrollbar-none">
+              <span className="text-[11px] text-amber-400 font-bold flex items-center gap-1 shrink-0 mr-1">
+                <HelpCircle className="w-3.5 h-3.5" />
+                Perguntas Rápidas:
+              </span>
+              {SARA_SUGGESTIONS.map((sug, i) => (
+                <button
+                  key={i}
+                  onClick={() => {
+                    if (activeTab === 'global') {
+                      setInputMessage(`@Sara ${sug}`);
+                      inputRef.current?.focus();
+                    } else {
+                      handleSendMessage(undefined, sug);
+                    }
+                  }}
+                  className="px-2.5 py-1 rounded-xl bg-slate-900 hover:bg-amber-500/20 border border-slate-800 hover:border-amber-500/40 text-[11px] text-slate-300 hover:text-amber-200 whitespace-nowrap transition-all cursor-pointer shrink-0"
+                >
+                  {sug}
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* Messages Stream */}
           <div className="flex-1 p-4 overflow-y-auto space-y-4 scrollbar-thin scrollbar-thumb-slate-800">
-            const currentList = activeTab === 'global' ? globalMessages : privateMessages;
-
             {(activeTab === 'global' ? globalMessages : privateMessages).length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center text-slate-500 text-sm">
                 <MessageSquare className="w-10 h-10 text-slate-700 mb-2" />
                 <p>Nenhuma mensagem ainda neste canal.</p>
-                <p className="text-xs text-slate-600 mt-1">Seja o primeiro a enviar uma mensagem técnica!</p>
+                <p className="text-xs text-slate-600 mt-1">
+                  {activeTab === 'global' 
+                    ? 'Envie a primeira mensagem para a comunidade!' 
+                    : 'Escreva uma mensagem para iniciar a conversa.'}
+                </p>
               </div>
             ) : (
               (activeTab === 'global' ? globalMessages : privateMessages).map((msg) => {
                 const isMe = msg.user_id === user.id;
+                const isSaraMsg = msg.user_id === 'sara-ai-assistant' || msg.user_name.includes('Sara (Tutora IA)');
 
                 return (
                   <div
@@ -372,17 +598,28 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
                     className={`flex items-start gap-3 group ${isMe ? 'flex-row-reverse' : ''}`}
                   >
                     {/* User Avatar */}
-                    <div className="w-9 h-9 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-xl shrink-0">
+                    <div className={`w-9 h-9 rounded-2xl flex items-center justify-center text-xl shrink-0 shadow-md ${
+                      isSaraMsg 
+                        ? 'bg-amber-500/20 border border-amber-500 text-2xl' 
+                        : 'bg-slate-800 border border-slate-700'
+                    }`}>
                       {msg.user_avatar}
                     </div>
 
                     {/* Message Bubble */}
-                    <div className={`max-w-[75%] sm:max-w-[65%] ${isMe ? 'items-end' : 'items-start'} flex flex-col`}>
+                    <div className={`max-w-[85%] sm:max-w-[75%] ${isMe ? 'items-end' : 'items-start'} flex flex-col`}>
                       {/* Name & Time */}
                       <div className="flex items-center gap-2 mb-1 px-1 text-[11px] text-slate-400">
-                        <span className="font-bold text-slate-200">{msg.user_name}</span>
+                        <span className={`font-bold ${isSaraMsg ? 'text-amber-400 flex items-center gap-1' : 'text-slate-200'}`}>
+                          {msg.user_name}
+                          {isSaraMsg && <Sparkles className="w-3 h-3 text-amber-400" />}
+                        </span>
                         {msg.user_qualification && (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-amber-300/90 border border-slate-700">
+                          <span className={`text-[10px] px-1.5 py-0.2 rounded border ${
+                            isSaraMsg
+                              ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                              : 'bg-slate-800 text-slate-400 border-slate-700'
+                          }`}>
                             {msg.user_qualification}
                           </span>
                         )}
@@ -393,9 +630,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
 
                       {/* Content Box */}
                       <div
-                        className={`p-3.5 rounded-2xl text-xs sm:text-sm leading-relaxed relative ${
+                        className={`p-3.5 sm:p-4 rounded-2xl text-xs sm:text-sm leading-relaxed relative ${
                           isMe
                             ? 'bg-amber-500 text-slate-950 font-medium rounded-tr-none shadow-md shadow-amber-500/10'
+                            : isSaraMsg
+                            ? 'bg-slate-900 border-2 border-amber-500/40 text-slate-100 rounded-tl-none shadow-lg shadow-amber-500/5'
                             : 'bg-slate-800 border border-slate-700/80 text-slate-100 rounded-tl-none'
                         }`}
                       >
@@ -405,7 +644,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
                             className={`mb-2 px-2.5 py-1.5 rounded-xl text-[11px] border-l-2 ${
                               isMe
                                 ? 'bg-amber-600/25 border-slate-950 text-slate-950'
-                                : 'bg-slate-900/80 border-amber-400 text-slate-300'
+                                : 'bg-slate-950/80 border-amber-400 text-slate-300'
                             }`}
                           >
                             <div className="font-bold flex items-center gap-1 text-[10px] opacity-90">
@@ -418,7 +657,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
                           </div>
                         )}
 
-                        <div>{msg.message}</div>
+                        <div className="whitespace-pre-wrap">{msg.message}</div>
                       </div>
 
                       {/* Action buttons (Reply / Report / Block) */}
@@ -436,7 +675,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
                           <span>Responder</span>
                         </button>
 
-                        {!isMe && (
+                        {!isMe && !isSaraMsg && (
                           <>
                             <span>•</span>
                             <button
@@ -464,6 +703,22 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
                 );
               })
             )}
+
+            {/* Sara is Typing Animation */}
+            {isSaraTyping && (
+              <div className="flex items-start gap-3 animate-fadeIn">
+                <div className="w-9 h-9 rounded-2xl bg-amber-500/20 border border-amber-500 flex items-center justify-center text-xl shrink-0">
+                  🤖
+                </div>
+                <div className="bg-slate-900 border border-amber-500/30 p-3 rounded-2xl rounded-tl-none flex items-center gap-2 text-xs text-amber-300">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-bounce" />
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-bounce [animation-delay:0.2s]" />
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-bounce [animation-delay:0.4s]" />
+                  <span className="text-slate-400 ml-1">Sara está elaborando a resposta técnica...</span>
+                </div>
+              </div>
+            )}
+
             <div ref={messagesEndRef} />
           </div>
 
@@ -491,7 +746,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
 
           {/* Chat Input Form */}
           <form
-            onSubmit={handleSendMessage}
+            onSubmit={(e) => handleSendMessage(e)}
             className="p-3 sm:p-4 border-t border-slate-800 bg-slate-950/80 flex items-center gap-2 sm:gap-3"
           >
             <input
@@ -503,13 +758,15 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
                   : replyingTo
                   ? `Respondendo a @${replyingTo.user_name}...`
                   : activeTab === 'global'
-                  ? 'Digite sua mensagem no Chat Global...'
+                  ? 'Digite sua mensagem no Chat Global (ou mencione @Sara)...'
+                  : selectedPeerId === 'sara-ai-assistant'
+                  ? 'Pergunte qualquer dúvida para a Tutora Sara...'
                   : `Mensagem privada para ${selectedPeerName}...`
               }
               value={inputMessage}
               disabled={cooldown > 0}
               onChange={(e) => setInputMessage(e.target.value)}
-              maxLength={250}
+              maxLength={300}
               className="flex-1 bg-slate-900 border border-slate-750 focus:border-amber-400/80 rounded-2xl px-4 py-3 text-xs sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none transition-all"
             />
 
@@ -600,3 +857,4 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
     </div>
   );
 };
+

@@ -418,6 +418,7 @@ export const SupabaseAuthService = {
       avatar?: string;
       qualification_interest?: Qualification;
       age?: number;
+      phone?: string;
     }
   ): Promise<UserProfile | null> {
     const payload: any = {
@@ -426,6 +427,11 @@ export const SupabaseAuthService = {
     if (updates.name) {
       payload.name = updates.name.trim();
       payload.nome_completo = updates.name.trim();
+    }
+    if (updates.phone) {
+      const clean = updates.phone.trim();
+      payload.phone = clean;
+      payload.celular = clean;
     }
     if (updates.avatar) payload.avatar = updates.avatar;
     if (updates.qualification_interest) {
@@ -760,82 +766,282 @@ export const SupabaseAuthService = {
 
 export const SupabaseDB = {
   /**
-   * Get Rankings directly from Supabase (profiles / users)
-   * Ordered by points descending (supporting negative scores)
+   * Get Rankings directly from Supabase (profiles / users) and server
+   * Ordered by points descending, ensuring every registered user appears automatically
    */
   async getRankings(qualification?: string): Promise<LeaderboardEntry[]> {
+    const userMap = new Map<string, any>();
+
+    // 1. Try querying profiles table
     try {
-      // 1. Try querying profiles table
       let profQuery = supabase
         .from('profiles')
         .select('*')
         .order('pontos', { ascending: false })
-        .limit(60);
+        .limit(100);
 
       if (qualification && qualification !== 'Global') {
         profQuery = profQuery.or(`qualificacao.eq.${qualification},qualification_interest.eq.${qualification}`);
       }
 
-      const { data: profData, error: profError } = await profQuery;
-
-      let sourceData = profData;
-
-      // 2. Fallback to users table if profiles table is empty or errored
-      if (profError || !sourceData || sourceData.length === 0) {
-        let userQuery = supabase
-          .from('users')
-          .select('*')
-          .order('total_points', { ascending: false })
-          .limit(60);
-
-        if (qualification && qualification !== 'Global') {
-          userQuery = userQuery.eq('qualification_interest', qualification);
-        }
-
-        const { data: userData, error: userError } = await userQuery;
-        if (!userError && userData && userData.length > 0) {
-          sourceData = userData;
-        }
+      const { data: profData } = await profQuery;
+      if (profData && profData.length > 0) {
+        profData.forEach((p) => {
+          userMap.set(p.id, {
+            id: p.id,
+            name: p.nome_completo || p.name || 'Jogador',
+            avatar: p.avatar || '👨‍🎓',
+            points: p.pontos !== undefined ? Number(p.pontos) : Number(p.total_points) || 0,
+            best_streak: Number(p.best_streak) || 0,
+            total_answered: Number(p.total_answered) || 0,
+            total_correct: Number(p.total_correct) || 0,
+            qualification: (p.qualificacao || p.qualification_interest || 'Eletricidade Industrial') as Qualification,
+            is_online: Boolean(p.is_online),
+          });
+        });
       }
-
-      if (!sourceData || sourceData.length === 0) {
-        // Fallback default sample leaderboard if both tables are empty
-        return [
-          { position: 1, user_id: 'usr-top1', name: 'Dr. Valdemar Chissano', avatar: '👨‍💼', points: 14500, streak: 28, accuracy_pct: 97, top_qualification: 'Eletricidade Industrial', is_online: true },
-          { position: 2, user_id: 'usr-top2', name: 'Engª. Sara Mondlane', avatar: '👩‍🔬', points: 13200, streak: 24, accuracy_pct: 94, top_qualification: 'Mecânica Industrial', is_online: true },
-          { position: 3, user_id: 'usr-top3', name: 'Téc. Mateus Cossa', avatar: '👨‍🔧', points: 11800, streak: 21, accuracy_pct: 92, top_qualification: 'Construção Civil', is_online: false },
-        ];
-      }
-
-      // Sort carefully descending (allowing negative points)
-      const sorted = [...sourceData].sort((a, b) => {
-        const ptsA = a.pontos !== undefined ? Number(a.pontos) : Number(a.total_points) || 0;
-        const ptsB = b.pontos !== undefined ? Number(b.pontos) : Number(b.total_points) || 0;
-        return ptsB - ptsA;
-      });
-
-      return sorted.map((u: any, idx: number) => {
-        const answered = Number(u.total_answered) || 0;
-        const correct = Number(u.total_correct) || 0;
-        const accuracy_pct = answered > 0 ? Math.round((correct / answered) * 100) : 0;
-        const points = u.pontos !== undefined ? Number(u.pontos) : Number(u.total_points) || 0;
-
-        return {
-          position: idx + 1,
-          user_id: u.id,
-          name: u.nome_completo || u.name || 'Jogador',
-          avatar: u.avatar || '👨‍🎓',
-          points,
-          streak: Number(u.best_streak) || 0,
-          accuracy_pct,
-          top_qualification: (u.qualificacao || u.qualification_interest || 'Eletricidade Industrial') as Qualification,
-          is_online: Boolean(u.is_online),
-        };
-      });
-    } catch (e) {
-      console.error('Error fetching rankings from Supabase:', e);
-      return [];
+    } catch (err) {
+      console.warn('profiles query error:', err);
     }
+
+    // 2. Query users table
+    try {
+      let userQuery = supabase
+        .from('users')
+        .select('*')
+        .order('total_points', { ascending: false })
+        .limit(100);
+
+      if (qualification && qualification !== 'Global') {
+        userQuery = userQuery.eq('qualification_interest', qualification);
+      }
+
+      const { data: userData } = await userQuery;
+      if (userData && userData.length > 0) {
+        userData.forEach((u) => {
+          const existing = userMap.get(u.id);
+          const uPoints = Number(u.total_points) || 0;
+          if (!existing || uPoints > existing.points) {
+            userMap.set(u.id, {
+              id: u.id,
+              name: u.name || u.nome_completo || existing?.name || 'Jogador',
+              avatar: u.avatar || existing?.avatar || '👨‍🎓',
+              points: uPoints,
+              best_streak: Number(u.best_streak) || existing?.best_streak || 0,
+              total_answered: Number(u.total_answered) || existing?.total_answered || 0,
+              total_correct: Number(u.total_correct) || existing?.total_correct || 0,
+              qualification: (u.qualification_interest || existing?.qualification || 'Eletricidade Industrial') as Qualification,
+              is_online: Boolean(u.is_online),
+            });
+          }
+        });
+      }
+    } catch (err) {
+      console.warn('users query error:', err);
+    }
+
+    // 3. Query server /api/users/all-registered fallback
+    try {
+      const resp = await fetch('/api/users/all-registered');
+      if (resp.ok) {
+        const json = await resp.json();
+        if (json.users && Array.isArray(json.users)) {
+          json.users.forEach((u: any) => {
+            if (!userMap.has(u.id)) {
+              if (!qualification || qualification === 'Global' || u.qualification_interest === qualification) {
+                userMap.set(u.id, {
+                  id: u.id,
+                  name: u.name,
+                  avatar: u.avatar || '👨‍🎓',
+                  points: Number(u.total_points) || 0,
+                  best_streak: Number(u.best_streak) || 0,
+                  total_answered: Number(u.total_answered) || 0,
+                  total_correct: Number(u.total_correct) || 0,
+                  qualification: u.qualification_interest || 'Eletricidade Industrial',
+                  is_online: Boolean(u.is_online),
+                });
+              }
+            }
+          });
+        }
+      }
+    } catch {}
+
+    // 4. Merge active user from localStorage if not present
+    try {
+      const savedAuth = localStorage.getItem('sara_quiz_auth_user');
+      if (savedAuth) {
+        const parsed = JSON.parse(savedAuth);
+        if (parsed?.id) {
+          const qualMatch = !qualification || qualification === 'Global' || parsed.qualification_interest === qualification;
+          if (qualMatch) {
+            const existing = userMap.get(parsed.id);
+            userMap.set(parsed.id, {
+              id: parsed.id,
+              name: parsed.name,
+              avatar: parsed.avatar || '👨‍🎓',
+              points: typeof parsed.total_points === 'number' ? parsed.total_points : (existing?.points || 0),
+              best_streak: parsed.best_streak || existing?.best_streak || 0,
+              total_answered: parsed.total_answered || existing?.total_answered || 0,
+              total_correct: parsed.total_correct || existing?.total_correct || 0,
+              qualification: parsed.qualification_interest || 'Eletricidade Industrial',
+              is_online: true,
+            });
+          }
+        }
+      }
+    } catch {}
+
+    const allUsers = Array.from(userMap.values());
+
+    if (allUsers.length === 0) {
+      // Seed default sample players if database is completely empty
+      return [
+        { position: 1, user_id: 'usr-top1', name: 'Dr. Valdemar Chissano', avatar: '👨‍💼', points: 14500, streak: 28, accuracy_pct: 97, top_qualification: 'Eletricidade Industrial', is_online: true },
+        { position: 2, user_id: 'usr-top2', name: 'Engª. Sara Mondlane', avatar: '👩‍🔬', points: 13200, streak: 24, accuracy_pct: 94, top_qualification: 'Mecânica Industrial', is_online: true },
+        { position: 3, user_id: 'usr-top3', name: 'Téc. Mateus Cossa', avatar: '👨‍🔧', points: 11800, streak: 21, accuracy_pct: 92, top_qualification: 'Construção Civil', is_online: false },
+        { position: 4, user_id: 'usr-top4', name: 'Fátima Tembe', avatar: '👩‍🏫', points: 9400, streak: 18, accuracy_pct: 90, top_qualification: 'Ensino Geral', is_online: true },
+      ];
+    }
+
+    // Sort descending by points
+    allUsers.sort((a, b) => b.points - a.points);
+
+    return allUsers.map((u, idx) => {
+      const accuracy_pct = u.total_answered > 0 ? Math.round((u.total_correct / u.total_answered) * 100) : 0;
+      return {
+        position: idx + 1,
+        user_id: u.id,
+        name: u.name,
+        avatar: u.avatar,
+        points: u.points,
+        streak: u.best_streak,
+        accuracy_pct,
+        top_qualification: u.qualification,
+        is_online: u.is_online,
+      };
+    });
+  },
+
+  /**
+   * Get all registered users/peers for chat and peer discovery
+   */
+  async getPeers(currentUserId?: string): Promise<Array<{ id: string; name: string; avatar: string; qualification: Qualification | string; isOnline: boolean }>> {
+    const peersMap = new Map<string, { id: string; name: string; avatar: string; qualification: string; isOnline: boolean }>();
+
+    // Always include Sara AI Assistant as the premier peer
+    peersMap.set('sara-ai-assistant', {
+      id: 'sara-ai-assistant',
+      name: 'Sara (Tutora IA)',
+      avatar: '🤖',
+      qualification: 'Assistente Inteligente & Tutora Oficial',
+      isOnline: true,
+    });
+
+    // 1. Fetch from profiles
+    try {
+      const { data: profs } = await supabase.from('profiles').select('*').limit(50);
+      if (profs && profs.length > 0) {
+        profs.forEach((p: any) => {
+          if (p.id !== currentUserId) {
+            peersMap.set(p.id, {
+              id: p.id,
+              name: p.nome_completo || p.name || 'Jogador',
+              avatar: p.avatar || '👨‍🎓',
+              qualification: p.qualificacao || p.qualification_interest || 'Eletricidade Industrial',
+              isOnline: Boolean(p.is_online),
+            });
+          }
+        });
+      }
+    } catch {}
+
+    // 2. Fetch from users
+    try {
+      const { data: users } = await supabase.from('users').select('*').limit(50);
+      if (users && users.length > 0) {
+        users.forEach((u: any) => {
+          if (u.id !== currentUserId && !peersMap.has(u.id)) {
+            peersMap.set(u.id, {
+              id: u.id,
+              name: u.name || 'Jogador',
+              avatar: u.avatar || '👨‍🎓',
+              qualification: u.qualification_interest || 'Eletricidade Industrial',
+              isOnline: Boolean(u.is_online),
+            });
+          }
+        });
+      }
+    } catch {}
+
+    // 3. Fallback from server /api/users/all-registered
+    try {
+      const resp = await fetch('/api/users/all-registered');
+      if (resp.ok) {
+        const json = await resp.json();
+        if (json.users && Array.isArray(json.users)) {
+          json.users.forEach((u: any) => {
+            if (u.id !== currentUserId && !peersMap.has(u.id)) {
+              peersMap.set(u.id, {
+                id: u.id,
+                name: u.name,
+                avatar: u.avatar || '👨‍🎓',
+                qualification: u.qualification_interest || 'Eletricidade Industrial',
+                isOnline: Boolean(u.is_online),
+              });
+            }
+          });
+        }
+      }
+    } catch {}
+
+    // Default active peers if list is small
+    const defaultPeers = [
+      { id: 'user-eletro-carlos', name: 'Carlos Eletrotécnico', avatar: '👨‍🔧', qualification: 'Eletricidade Industrial', isOnline: true },
+      { id: 'user-tech-joao', name: 'João Developer', avatar: '👨‍💻', qualification: 'Informática & Tecnologia', isOnline: true },
+      { id: 'user-mec-ana', name: 'Engª. Ana Valente', avatar: '👩‍🔧', qualification: 'Mecânica Industrial', isOnline: true },
+      { id: 'user-civil-mateus', name: 'Mateus Construtor', avatar: '👷‍♂️', qualification: 'Construção Civil', isOnline: true },
+      { id: 'user-geral-fatima', name: 'Profª. Fátima Mondlane', avatar: '👩‍🏫', qualification: 'Ensino Geral', isOnline: true },
+    ];
+
+    defaultPeers.forEach((dp) => {
+      if (!peersMap.has(dp.id) && dp.id !== currentUserId) {
+        peersMap.set(dp.id, dp);
+      }
+    });
+
+    return Array.from(peersMap.values());
+  },
+
+  /**
+   * Ask Sara AI Assistant directly via server-side Gemini API
+   */
+  async askSaraAssistant(payload: {
+    message: string;
+    user_id?: string;
+    user_name?: string;
+    user_qualification?: string;
+  }): Promise<{ reply: string; sender: string }> {
+    try {
+      const resp = await fetch('/api/chat/sara', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        return {
+          reply: data.reply || 'Olá! Estou à disposição para te ajudar nos estudos e nas regras do Sara Quiz.',
+          sender: data.sender || 'Sara (Tutora IA)',
+        };
+      }
+    } catch (err) {
+      console.warn('Error connecting to Sara API:', err);
+    }
+    return {
+      reply: 'Olá! Sou a Sara, sua tutora virtual no Sara Quiz. Posso tirar dúvidas de Eletricidade, Mecânica, Construção, Contabilidade, Gestão, Ensino Geral e Informática, ou te explicar como funciona o jogo e os saques via M-Pesa e E-Mola!',
+      sender: 'Sara (Tutora IA)',
+    };
   },
 
   /**

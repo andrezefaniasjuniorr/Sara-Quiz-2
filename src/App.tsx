@@ -135,6 +135,7 @@ export function App() {
     avatar?: string; 
     qualification_interest?: Qualification;
     age?: number;
+    phone?: string;
   }) => {
     if (!user) return;
     try {
