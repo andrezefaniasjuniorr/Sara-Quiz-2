@@ -144,23 +144,25 @@ export const SupabaseAuthService = {
       qualification_stats: createEmptyQualificationStats(),
     };
 
-    // 1. Explicit upsert into public.users table (id, name, qualification, points)
+    // 1. Explicit upsert into public.users table (id, name, phone, qualification, points)
     try {
-      const { error: userUpsertError } = await supabase.from('users').upsert(
-        [
-          {
-            id: authUserId,
-            name: params.name.trim() || 'Novo Jogador',
-            qualification: params.qualification_interest || 'Geral',
-            points: 0,
-          },
-        ],
-        { onConflict: 'id' }
-      );
+      const { data, error } = await supabase
+        .from('users')
+        .upsert(
+          [
+            {
+              id: authUserId || `usr-${Date.now()}`,
+              name: params.name.trim() || 'Novo Jogador',
+              phone: cleanPhone,
+              qualification: params.qualification_interest || 'Geral',
+              points: 0,
+            },
+          ],
+          { onConflict: 'id' }
+        )
+        .select();
 
-      if (userUpsertError) {
-        console.warn('[Supabase users upsert error]:', userUpsertError.message);
-      }
+      console.log('Resultado Supabase:', data, error);
     } catch (dbErr) {
       console.warn('[Supabase users upsert exception]:', dbErr);
     }
@@ -282,20 +284,23 @@ export const SupabaseAuthService = {
 
           try {
             // Upsert directly into users table on Supabase upon login
-            const { error: loginUpsertErr } = await supabase.from('users').upsert(
-              [
-                {
-                  id: userObj.id,
-                  name: userObj.name || 'Novo Jogador',
-                  qualification: userObj.qualification_interest || 'Geral',
-                  points: userObj.total_points || 0,
-                },
-              ],
-              { onConflict: 'id' }
-            );
-            if (loginUpsertErr) {
-              console.warn('[Supabase Login users upsert error]:', loginUpsertErr.message);
-            }
+            const { data, error } = await supabase
+              .from('users')
+              .upsert(
+                [
+                  {
+                    id: userObj.id || `usr-${Date.now()}`,
+                    name: userObj.name || 'Novo Jogador',
+                    phone: userObj.phone || cleanPhone,
+                    qualification: userObj.qualification_interest || 'Geral',
+                    points: userObj.total_points || 0,
+                  },
+                ],
+                { onConflict: 'id' }
+              )
+              .select();
+
+            console.log('Resultado Supabase:', data, error);
           } catch (upsertErr) {
             console.warn('[Supabase Login users upsert note]:', upsertErr);
           }
@@ -335,20 +340,23 @@ export const SupabaseAuthService = {
 
           try {
             // Upsert directly into users table on Supabase
-            const { error: uErr } = await supabase.from('users').upsert(
-              [
-                {
-                  id: userObj.id,
-                  name: userObj.name || 'Novo Jogador',
-                  qualification: userObj.qualification_interest || 'Geral',
-                  points: userObj.total_points || 0,
-                },
-              ],
-              { onConflict: 'id' }
-            );
-            if (uErr) {
-              console.warn('[Supabase users upsert error]:', uErr.message);
-            }
+            const { data, error } = await supabase
+              .from('users')
+              .upsert(
+                [
+                  {
+                    id: userObj.id || `usr-${Date.now()}`,
+                    name: userObj.name || 'Novo Jogador',
+                    phone: userObj.phone || cleanPhone,
+                    qualification: userObj.qualification_interest || 'Geral',
+                    points: userObj.total_points || 0,
+                  },
+                ],
+                { onConflict: 'id' }
+              )
+              .select();
+
+            console.log('Resultado Supabase:', data, error);
           } catch (uErr) {
             console.warn('[Supabase users upsert note]:', uErr);
           }
@@ -666,22 +674,25 @@ export const SupabaseAuthService = {
       const savedAuthStr = localStorage.getItem('sara_quiz_auth_user');
       const savedUser = savedAuthStr ? JSON.parse(savedAuthStr) : null;
       const userName = savedUser?.name || 'Jogador';
+      const userPhone = savedUser?.phone || '';
 
-      const { error: userPointErr } = await supabase.from('users').upsert(
-        [
-          {
-            id: payload.user_id,
-            name: userName,
-            qualification: payload.qualification || 'Geral',
-            points: total_points,
-          },
-        ],
-        { onConflict: 'id' }
-      );
+      const { data, error } = await supabase
+        .from('users')
+        .upsert(
+          [
+            {
+              id: payload.user_id || `usr-${Date.now()}`,
+              name: userName,
+              phone: userPhone,
+              qualification: payload.qualification || 'Geral',
+              points: total_points,
+            },
+          ],
+          { onConflict: 'id' }
+        )
+        .select();
 
-      if (userPointErr) {
-        console.warn('[Supabase update points error]:', userPointErr.message);
-      }
+      console.log('Resultado Supabase:', data, error);
     } catch (userUpErr) {
       console.warn('Error upserting users points in Supabase:', userUpErr);
     }

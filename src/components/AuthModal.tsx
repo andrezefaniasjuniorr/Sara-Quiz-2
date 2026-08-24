@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { UserProfile, Qualification } from '../types';
 import { QUALIFICATIONS_LIST } from '../data/qualifications';
-import { SupabaseAuthService } from '../lib/supabase';
+import { SupabaseAuthService, supabase } from '../lib/supabase';
 import { 
   User, 
   Phone, 
@@ -58,11 +58,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setErrorMsg(null);
     setSuccessMsg(null);
 
-    if (!name.trim()) {
+    const userName = name.trim();
+    const userPhone = phone.trim();
+    const userQualification = qualification || 'Geral';
+    const userPoints = 0;
+
+    if (!userName) {
       setErrorMsg('Por favor, informe seu nome completo.');
       return;
     }
-    if (!phone.trim()) {
+    if (!userPhone) {
       setErrorMsg('Por favor, informe o seu número de celular.');
       return;
     }
@@ -82,21 +87,58 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setLoading(true);
 
     try {
-      // 100% Native Supabase Registration
+      // 1. Native Supabase Registration
       const { user } = await SupabaseAuthService.register({
-        name: name.trim(),
-        phone: phone.trim(),
+        name: userName,
+        phone: userPhone,
         age: Number(age),
         password,
         avatar,
-        qualification_interest: qualification,
+        qualification_interest: userQualification as Qualification,
       });
+
+      // 2. Direct explicit upsert into 'users' table on Supabase
+      const { data, error } = await supabase
+        .from('users')
+        .upsert([
+          {
+            id: user?.id || `usr-${Date.now()}`,
+            name: userName,
+            phone: userPhone,
+            qualification: userQualification,
+            points: userPoints
+          }
+        ], { onConflict: 'id' })
+        .select();
+
+      console.log('Resultado Supabase:', data, error);
 
       setSuccessMsg('Conta criada com sucesso no Supabase! Carregando jogo...');
       setTimeout(() => {
         onLoginSuccess(user);
       }, 800);
     } catch (err: any) {
+      // Direct fallback upsert if registration encountered exception
+      try {
+        const fallbackId = `usr-${userPhone.replace(/\D/g, '') || Date.now()}`;
+        const { data, error } = await supabase
+          .from('users')
+          .upsert([
+            {
+              id: fallbackId,
+              name: userName,
+              phone: userPhone,
+              qualification: userQualification,
+              points: userPoints
+            }
+          ], { onConflict: 'id' })
+          .select();
+
+        console.log('Resultado Supabase:', data, error);
+      } catch (fbErr) {
+        console.warn('Fallback users upsert note:', fbErr);
+      }
+
       setErrorMsg(err.message || 'Falha ao registrar conta no Supabase. Verifique a conexão.');
     } finally {
       setLoading(false);
@@ -108,7 +150,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setErrorMsg(null);
     setSuccessMsg(null);
 
-    if (!loginPhone.trim() || !loginPassword.trim()) {
+    const userPhone = loginPhone.trim();
+
+    if (!userPhone || !loginPassword.trim()) {
       setErrorMsg('Informe o número de celular e a palavra-passe.');
       return;
     }
@@ -116,8 +160,24 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setLoading(true);
 
     try {
-      // 100% Native Supabase Login
-      const { user } = await SupabaseAuthService.login(loginPhone.trim(), loginPassword);
+      // 1. Native Supabase Login
+      const { user } = await SupabaseAuthService.login(userPhone, loginPassword);
+
+      // 2. Direct explicit upsert into 'users' table on Supabase
+      const { data, error } = await supabase
+        .from('users')
+        .upsert([
+          {
+            id: user.id || `usr-${Date.now()}`,
+            name: user.name || 'Jogador',
+            phone: user.phone || userPhone,
+            qualification: user.qualification_interest || 'Geral',
+            points: user.total_points || 0
+          }
+        ], { onConflict: 'id' })
+        .select();
+
+      console.log('Resultado Supabase:', data, error);
 
       setSuccessMsg(`Bem-vindo de volta, ${user.name}!`);
       setTimeout(() => {

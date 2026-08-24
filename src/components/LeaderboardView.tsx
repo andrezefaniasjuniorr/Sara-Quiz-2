@@ -33,6 +33,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
       }
 
       const { data: rankingGlobal, error } = await query;
+      console.log('Resultado Supabase Ranking:', rankingGlobal, error);
 
       if (!error && rankingGlobal && rankingGlobal.length > 0) {
         const formatted: LeaderboardEntry[] = rankingGlobal.map((u: any, idx: number) => {
