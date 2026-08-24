@@ -39,27 +39,17 @@ let supabaseError: string | null = null;
 
 async function syncUserToSupabase(user: StoredUser) {
   try {
-    const { error } = await supabase.from('users').upsert({
-      id: user.id,
-      name: user.name,
-      phone: user.phone,
-      age: user.age,
-      avatar: user.avatar,
-      qualification: user.qualification_interest,
-      qualification_interest: user.qualification_interest,
-      points: user.total_points,
-      total_points: user.total_points,
-      best_streak: user.best_streak,
-      current_streak: user.current_streak,
-      total_answered: user.total_answered,
-      total_correct: user.total_correct,
-      total_skipped: user.total_skipped,
-      is_online: user.is_online,
-      joined_at: user.joined_at,
-      last_active: user.last_active,
-      password_hash: user.password_hash,
-      qualification_stats: user.qualification_stats,
-    });
+    const { error } = await supabase.from('users').upsert(
+      [
+        {
+          id: user.id,
+          name: user.name || 'Novo Jogador',
+          qualification: user.qualification_interest || 'Geral',
+          points: user.total_points || 0,
+        },
+      ],
+      { onConflict: 'id' }
+    );
     if (error) {
       console.warn('[Supabase Sync User Error]:', error.message);
     }
