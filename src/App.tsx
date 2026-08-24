@@ -10,7 +10,7 @@ import { ChatView } from './components/ChatView';
 import { ProfileView } from './components/ProfileView';
 import { AdminPanel } from './components/AdminPanel';
 import { AuthModal } from './components/AuthModal';
-import { SupabaseAuthService, supabase } from './lib/supabase';
+import { SupabaseAuthService, supabase, handleUserRegistration } from './lib/supabase';
 
 export function App() {
   const [currentTab, setCurrentTab] = useState<
@@ -42,30 +42,14 @@ export function App() {
       localStorage.setItem('sara_quiz_auth_user', JSON.stringify(user));
       setIsAuthModalOpen(false);
 
-      // Explicitly upsert to Supabase users table
-      (async () => {
-        try {
-          const { data, error } = await supabase
-            .from('users')
-            .upsert(
-              [
-                {
-                  id: user.id || `usr-${Date.now()}`,
-                  name: user.name || 'Novo Jogador',
-                  phone: user.phone || '',
-                  qualification: user.qualification_interest || 'Geral',
-                  points: user.total_points || 0,
-                },
-              ],
-              { onConflict: 'id' }
-            )
-            .select();
-
-          console.log('Resultado Supabase:', data, error);
-        } catch (err) {
-          console.warn('Sync Supabase exception:', err);
-        }
-      })();
+      // Force synchronous/direct upsert to Supabase users table
+      handleUserRegistration({
+        id: user.id || `usr-${Date.now()}`,
+        name: user.name || 'Novo Jogador',
+        phone: user.phone || null,
+        qualification: user.qualification_interest || 'Geral',
+        points: user.total_points || 0,
+      });
     } else {
       localStorage.removeItem('sara_quiz_auth_user');
       setIsAuthModalOpen(true);

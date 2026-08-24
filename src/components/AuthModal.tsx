@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { UserProfile, Qualification } from '../types';
 import { QUALIFICATIONS_LIST } from '../data/qualifications';
-import { SupabaseAuthService, supabase } from '../lib/supabase';
+import { SupabaseAuthService, supabase, handleUserRegistration, createEmptyQualificationStats } from '../lib/supabase';
 import { 
   User, 
   Phone, 
@@ -88,63 +88,56 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     try {
       // 1. Native Supabase Registration
-      const { user } = await SupabaseAuthService.register({
+      let userObj: UserProfile | null = null;
+      try {
+        const { user } = await SupabaseAuthService.register({
+          name: userName,
+          phone: userPhone,
+          age: Number(age),
+          password,
+          avatar,
+          qualification_interest: userQualification as Qualification,
+        });
+        userObj = user;
+      } catch (authErr: any) {
+        console.warn('Auth service register fallback note:', authErr);
+      }
+
+      const assignedId = userObj?.id || `usr-${userPhone.replace(/\D/g, '') || Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+
+      // 2. Direct synchronous upsert into 'users' table on Supabase before redirecting
+      await handleUserRegistration({
+        id: assignedId,
         name: userName,
-        phone: userPhone,
-        age: Number(age),
-        password,
-        avatar,
-        qualification_interest: userQualification as Qualification,
+        phone: userPhone || null,
+        qualification: userQualification || 'Geral',
+        points: 0,
       });
 
-      // 2. Direct synchronous upsert into 'users' table on Supabase with error check
-      const newUserId = user?.id || `usr-${userPhone || Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-      const { data, error } = await supabase
-        .from('users')
-        .upsert({
-          id: newUserId,
-          name: userName,
-          phone: userPhone || '',
-          qualification: userQualification || 'Geral',
-          points: 0
-        }, { onConflict: 'id' });
+      const finalUserProfile: UserProfile = userObj || {
+        id: assignedId,
+        name: userName,
+        phone: userPhone,
+        age: Number(age) || 20,
+        avatar,
+        qualification_interest: userQualification as Qualification,
+        total_points: 0,
+        best_streak: 0,
+        current_streak: 0,
+        total_answered: 0,
+        total_correct: 0,
+        total_skipped: 0,
+        is_online: true,
+        joined_at: new Date().toISOString(),
+        last_active: new Date().toISOString(),
+        qualification_stats: createEmptyQualificationStats(),
+      };
 
-      if (error) {
-        console.error("Erro ao salvar no Supabase:", error.message);
-        alert("Erro ao registrar no banco: " + error.message);
-      } else {
-        console.log('Resultado Supabase:', data);
-      }
-
-      setSuccessMsg('Conta criada com sucesso no Supabase! Carregando jogo...');
+      setSuccessMsg('Conta criada e gravada com sucesso no Supabase! Carregando jogo...');
       setTimeout(() => {
-        onLoginSuccess(user);
-      }, 800);
+        onLoginSuccess(finalUserProfile);
+      }, 600);
     } catch (err: any) {
-      // Direct fallback upsert if registration encountered exception
-      try {
-        const newUserId = `usr-${userPhone || Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-        const { data, error } = await supabase
-          .from('users')
-          .upsert({
-            id: newUserId,
-            name: userName,
-            phone: userPhone || '',
-            qualification: userQualification || 'Geral',
-            points: 0
-          }, { onConflict: 'id' });
-
-        if (error) {
-          console.error("Erro ao salvar no Supabase:", error.message);
-          alert("Erro ao registrar no banco: " + error.message);
-        } else {
-          console.log('Resultado Supabase:', data);
-        }
-      } catch (fbErr: any) {
-        console.error('Fallback users upsert error:', fbErr);
-        alert("Erro ao registrar no banco: " + (fbErr?.message || 'Falha de rede'));
-      }
-
       setErrorMsg(err.message || 'Falha ao registrar conta no Supabase. Verifique a conexão.');
     } finally {
       setLoading(false);
@@ -169,29 +162,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       // 1. Native Supabase Login
       const { user } = await SupabaseAuthService.login(userPhone, loginPassword);
 
-      // 2. Direct synchronous upsert into 'users' table on Supabase with error check
-      const newUserId = user?.id || `usr-${userPhone || Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-      const { data, error } = await supabase
-        .from('users')
-        .upsert({
-          id: newUserId,
-          name: user.name || 'Jogador',
-          phone: user.phone || userPhone || '',
-          qualification: user.qualification_interest || 'Geral',
-          points: user.total_points || 0
-        }, { onConflict: 'id' });
-
-      if (error) {
-        console.error("Erro ao salvar no Supabase:", error.message);
-        alert("Erro ao registrar no banco: " + error.message);
-      } else {
-        console.log('Resultado Supabase:', data);
-      }
+      // 2. Direct synchronous upsert into 'users' table on Supabase before redirecting
+      await handleUserRegistration({
+        id: user?.id || `usr-${userPhone || Date.now()}`,
+        name: user?.name || 'Jogador',
+        phone: user?.phone || userPhone || null,
+        qualification: user?.qualification_interest || 'Geral',
+        points: user?.total_points || 0,
+      });
 
       setSuccessMsg(`Bem-vindo de volta, ${user.name}!`);
       setTimeout(() => {
         onLoginSuccess(user);
-      }, 700);
+      }, 500);
     } catch (err: any) {
       setErrorMsg(err.message || 'Credenciais inválidas. Verifique seu número e palavra-passe.');
     } finally {

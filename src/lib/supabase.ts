@@ -72,6 +72,40 @@ export function simpleHash(str: string): string {
 // 100% Native Supabase Auth & Database Service Layer
 // ----------------------------------------------------
 
+export async function handleUserRegistration(userData: {
+  id?: string;
+  name: string;
+  phone?: string | null;
+  qualification?: string;
+  points?: number;
+}) {
+  try {
+    const newId = userData.id || `usr-${Date.now()}`;
+    const { data, error } = await supabase
+      .from('users')
+      .upsert({
+        id: newId,
+        name: userData.name || 'Novo Jogador',
+        phone: userData.phone || null,
+        qualification: userData.qualification || 'Geral',
+        points: userData.points !== undefined ? Number(userData.points) : 0
+      }, { onConflict: 'id' })
+      .select();
+
+    if (error) {
+      console.error("Erro ao salvar no Supabase:", error.message);
+      alert("Aviso: Não foi possível gravar seus dados no servidor: " + error.message);
+    } else {
+      console.log("Usuário gravado com sucesso no Supabase!", data);
+    }
+    return { data, error };
+  } catch (err: any) {
+    console.error("Falha na conexão com o banco:", err);
+    alert("Aviso: Não foi possível gravar seus dados no servidor: " + (err?.message || err));
+    return { data: null, error: err };
+  }
+}
+
 export interface RegisterParams {
   name: string;
   phone: string;
@@ -145,27 +179,13 @@ export const SupabaseAuthService = {
     };
 
     // 1. Explicit upsert into public.users table (id, name, phone, qualification, points)
-    try {
-      const { data, error } = await supabase
-        .from('users')
-        .upsert(
-          [
-            {
-              id: authUserId || `usr-${Date.now()}`,
-              name: params.name.trim() || 'Novo Jogador',
-              phone: cleanPhone,
-              qualification: params.qualification_interest || 'Geral',
-              points: 0,
-            },
-          ],
-          { onConflict: 'id' }
-        )
-        .select();
-
-      console.log('Resultado Supabase:', data, error);
-    } catch (dbErr) {
-      console.warn('[Supabase users upsert exception]:', dbErr);
-    }
+    await handleUserRegistration({
+      id: authUserId || `usr-${Date.now()}`,
+      name: params.name.trim() || 'Novo Jogador',
+      phone: cleanPhone || null,
+      qualification: params.qualification_interest || 'Geral',
+      points: 0,
+    });
 
     // 2. Also save into public.profiles table
     try {
