@@ -22,21 +22,25 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
   const fetchLeaderboard = async (showLoadingSpinner = true) => {
     if (showLoadingSpinner) setLoading(true);
     try {
-      // 1. Direct Supabase query on 'users' table ordered by points descending (no local storage filtering)
-      let query = supabase
+      // 1. Direct Supabase query on 'users' table ordered by points descending
+      const { data: allUsers, error } = await supabase
         .from('users')
         .select('*')
         .order('points', { ascending: false });
 
-      if (selectedFilter !== 'Global') {
-        query = query.or(`qualification.eq.${selectedFilter},qualification_interest.eq.${selectedFilter}`);
-      }
+      console.log('Resultado Supabase Ranking allUsers:', allUsers, error);
 
-      const { data: rankingGlobal, error } = await query;
-      console.log('Resultado Supabase Ranking:', rankingGlobal, error);
+      if (!error && allUsers) {
+        // Filter by qualification only if a specific qualification is selected
+        const filteredUsers = selectedFilter === 'Global' 
+          ? allUsers 
+          : allUsers.filter((u: any) => 
+              (u.qualification === selectedFilter) || 
+              (u.qualification_interest === selectedFilter) || 
+              (u.qualificacao === selectedFilter)
+            );
 
-      if (!error && rankingGlobal && rankingGlobal.length > 0) {
-        const formatted: LeaderboardEntry[] = rankingGlobal.map((u: any, idx: number) => {
+        const formatted: LeaderboardEntry[] = filteredUsers.map((u: any, idx: number) => {
           const pts = u.points !== undefined ? Number(u.points) : (u.total_points !== undefined ? Number(u.total_points) : Number(u.pontos) || 0);
           const ans = Number(u.total_answered) || 0;
           const cor = Number(u.total_correct) || 0;
@@ -52,7 +56,6 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
             is_online: Boolean(u.is_online),
           };
         });
-        // Replace frontend ranking state with rankingGlobal result
         setLeaderboard(formatted);
       } else {
         // Fallback with SupabaseDB multi-table adapter
