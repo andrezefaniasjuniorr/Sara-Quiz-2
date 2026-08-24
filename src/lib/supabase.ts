@@ -80,28 +80,27 @@ export async function handleUserRegistration(userData: {
   points?: number;
 }) {
   try {
-    const newId = userData.id || `usr-${Date.now()}`;
+    const newId = userData.id || `usr-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const { data, error } = await supabase
       .from('users')
       .upsert({
         id: newId,
         name: userData.name || 'Novo Jogador',
-        phone: userData.phone || null,
         qualification: userData.qualification || 'Geral',
+        phone: userData.phone || '',
         points: userData.points !== undefined ? Number(userData.points) : 0
-      }, { onConflict: 'id' })
-      .select();
+      }, { onConflict: 'id' });
 
     if (error) {
-      console.error("Erro ao salvar no Supabase:", error.message);
-      alert("Aviso: Não foi possível gravar seus dados no servidor: " + error.message);
+      console.error('Erro ao salvar no Supabase:', error);
+      alert('Aviso do Servidor: ' + error.message);
     } else {
-      console.log("Usuário gravado com sucesso no Supabase!", data);
+      console.log('Usuário gravado com sucesso no Supabase:', data);
     }
     return { data, error };
   } catch (err: any) {
-    console.error("Falha na conexão com o banco:", err);
-    alert("Aviso: Não foi possível gravar seus dados no servidor: " + (err?.message || err));
+    console.error('Falha na conexão com o banco:', err);
+    alert('Aviso do Servidor: ' + (err?.message || 'Falha de conexão com o Supabase'));
     return { data: null, error: err };
   }
 }

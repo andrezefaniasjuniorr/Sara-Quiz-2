@@ -87,7 +87,28 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setLoading(true);
 
     try {
-      // 1. Native Supabase Registration
+      // 1. Generate unique user id
+      const newUserId = `usr-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+
+      // 2. Direct synchronous upsert into 'users' table on Supabase
+      const { data, error } = await supabase
+        .from('users')
+        .upsert({
+          id: newUserId,
+          name: userName || 'Novo Jogador',
+          qualification: userQualification || 'Geral',
+          phone: userPhone || '',
+          points: 0
+        }, { onConflict: 'id' });
+
+      if (error) {
+        console.error('Erro ao salvar no Supabase:', error);
+        alert('Aviso do Servidor: ' + error.message);
+      } else {
+        console.log('Usuário gravado com sucesso no Supabase:', data);
+      }
+
+      // Also call SupabaseAuthService.register in background/service layer
       let userObj: UserProfile | null = null;
       try {
         const { user } = await SupabaseAuthService.register({
@@ -103,19 +124,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         console.warn('Auth service register fallback note:', authErr);
       }
 
-      const assignedId = userObj?.id || `usr-${userPhone.replace(/\D/g, '') || Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-
-      // 2. Direct synchronous upsert into 'users' table on Supabase before redirecting
-      await handleUserRegistration({
-        id: assignedId,
-        name: userName,
-        phone: userPhone || null,
-        qualification: userQualification || 'Geral',
-        points: 0,
-      });
-
       const finalUserProfile: UserProfile = userObj || {
-        id: assignedId,
+        id: newUserId,
         name: userName,
         phone: userPhone,
         age: Number(age) || 20,
@@ -136,8 +146,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setSuccessMsg('Conta criada e gravada com sucesso no Supabase! Carregando jogo...');
       setTimeout(() => {
         onLoginSuccess(finalUserProfile);
-      }, 600);
+      }, 500);
     } catch (err: any) {
+      console.error('Erro inesperado no cadastro:', err);
+      alert('Aviso do Servidor: ' + (err?.message || 'Erro de conexão'));
       setErrorMsg(err.message || 'Falha ao registrar conta no Supabase. Verifique a conexão.');
     } finally {
       setLoading(false);
@@ -163,19 +175,29 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       const { user } = await SupabaseAuthService.login(userPhone, loginPassword);
 
       // 2. Direct synchronous upsert into 'users' table on Supabase before redirecting
-      await handleUserRegistration({
-        id: user?.id || `usr-${userPhone || Date.now()}`,
-        name: user?.name || 'Jogador',
-        phone: user?.phone || userPhone || null,
-        qualification: user?.qualification_interest || 'Geral',
-        points: user?.total_points || 0,
-      });
+      const { data, error } = await supabase
+        .from('users')
+        .upsert({
+          id: user?.id || `usr-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          name: user?.name || 'Novo Jogador',
+          qualification: user?.qualification_interest || 'Geral',
+          phone: user?.phone || userPhone || '',
+          points: user?.total_points || 0
+        }, { onConflict: 'id' });
+
+      if (error) {
+        console.error('Erro ao salvar no Supabase:', error);
+        alert('Aviso do Servidor: ' + error.message);
+      } else {
+        console.log('Usuário logado e sincronizado no Supabase:', data);
+      }
 
       setSuccessMsg(`Bem-vindo de volta, ${user.name}!`);
       setTimeout(() => {
         onLoginSuccess(user);
       }, 500);
     } catch (err: any) {
+      console.error('Erro no login:', err);
       setErrorMsg(err.message || 'Credenciais inválidas. Verifique seu número e palavra-passe.');
     } finally {
       setLoading(false);
