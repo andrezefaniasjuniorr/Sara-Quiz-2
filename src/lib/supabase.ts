@@ -766,19 +766,79 @@ export const SupabaseAuthService = {
 
 export const SupabaseDB = {
   /**
-   * Get Rankings directly from Supabase (profiles / users) and server
-   * Ordered by points descending, ensuring every registered user appears automatically
+   * Get Rankings directly from Supabase (users / profiles)
+   * Ordered by points descending without any user ID filter so all registered users appear
    */
   async getRankings(qualification?: string): Promise<LeaderboardEntry[]> {
     const userMap = new Map<string, any>();
 
-    // 1. Try querying profiles table
+    // 1. Primary Query on 'users' table ordered by points descending
+    try {
+      let userQuery = supabase
+        .from('users')
+        .select('*')
+        .order('points', { ascending: false });
+
+      if (qualification && qualification !== 'Global') {
+        userQuery = userQuery.eq('qualification_interest', qualification);
+      }
+
+      const { data: userData, error: userError } = await userQuery;
+
+      if (!userError && userData && userData.length > 0) {
+        userData.forEach((u: any) => {
+          const pts = u.points !== undefined ? Number(u.points) : (u.total_points !== undefined ? Number(u.total_points) : Number(u.pontos) || 0);
+          userMap.set(u.id, {
+            id: u.id,
+            name: u.name || u.nome_completo || 'Jogador',
+            avatar: u.avatar || '👨‍🎓',
+            points: pts,
+            best_streak: Number(u.best_streak) || 0,
+            total_answered: Number(u.total_answered) || 0,
+            total_correct: Number(u.total_correct) || 0,
+            qualification: (u.qualification_interest || u.qualificacao || 'Eletricidade Industrial') as Qualification,
+            is_online: Boolean(u.is_online),
+          });
+        });
+      } else if (userError) {
+        // Fallback with order('total_points') if column 'points' is named 'total_points' in existing schema
+        let fallbackQuery = supabase
+          .from('users')
+          .select('*')
+          .order('total_points', { ascending: false });
+
+        if (qualification && qualification !== 'Global') {
+          fallbackQuery = fallbackQuery.eq('qualification_interest', qualification);
+        }
+
+        const { data: fbData } = await fallbackQuery;
+        if (fbData && fbData.length > 0) {
+          fbData.forEach((u: any) => {
+            const pts = u.points !== undefined ? Number(u.points) : (u.total_points !== undefined ? Number(u.total_points) : Number(u.pontos) || 0);
+            userMap.set(u.id, {
+              id: u.id,
+              name: u.name || u.nome_completo || 'Jogador',
+              avatar: u.avatar || '👨‍🎓',
+              points: pts,
+              best_streak: Number(u.best_streak) || 0,
+              total_answered: Number(u.total_answered) || 0,
+              total_correct: Number(u.total_correct) || 0,
+              qualification: (u.qualification_interest || u.qualificacao || 'Eletricidade Industrial') as Qualification,
+              is_online: Boolean(u.is_online),
+            });
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('users table query note:', err);
+    }
+
+    // 2. Query 'profiles' table to merge all users
     try {
       let profQuery = supabase
         .from('profiles')
         .select('*')
-        .order('pontos', { ascending: false })
-        .limit(100);
+        .order('pontos', { ascending: false });
 
       if (qualification && qualification !== 'Global') {
         profQuery = profQuery.or(`qualificacao.eq.${qualification},qualification_interest.eq.${qualification}`);
@@ -786,58 +846,26 @@ export const SupabaseDB = {
 
       const { data: profData } = await profQuery;
       if (profData && profData.length > 0) {
-        profData.forEach((p) => {
-          userMap.set(p.id, {
-            id: p.id,
-            name: p.nome_completo || p.name || 'Jogador',
-            avatar: p.avatar || '👨‍🎓',
-            points: p.pontos !== undefined ? Number(p.pontos) : Number(p.total_points) || 0,
-            best_streak: Number(p.best_streak) || 0,
-            total_answered: Number(p.total_answered) || 0,
-            total_correct: Number(p.total_correct) || 0,
-            qualification: (p.qualificacao || p.qualification_interest || 'Eletricidade Industrial') as Qualification,
-            is_online: Boolean(p.is_online),
-          });
-        });
-      }
-    } catch (err) {
-      console.warn('profiles query error:', err);
-    }
-
-    // 2. Query users table
-    try {
-      let userQuery = supabase
-        .from('users')
-        .select('*')
-        .order('total_points', { ascending: false })
-        .limit(100);
-
-      if (qualification && qualification !== 'Global') {
-        userQuery = userQuery.eq('qualification_interest', qualification);
-      }
-
-      const { data: userData } = await userQuery;
-      if (userData && userData.length > 0) {
-        userData.forEach((u) => {
-          const existing = userMap.get(u.id);
-          const uPoints = Number(u.total_points) || 0;
-          if (!existing || uPoints > existing.points) {
-            userMap.set(u.id, {
-              id: u.id,
-              name: u.name || u.nome_completo || existing?.name || 'Jogador',
-              avatar: u.avatar || existing?.avatar || '👨‍🎓',
-              points: uPoints,
-              best_streak: Number(u.best_streak) || existing?.best_streak || 0,
-              total_answered: Number(u.total_answered) || existing?.total_answered || 0,
-              total_correct: Number(u.total_correct) || existing?.total_correct || 0,
-              qualification: (u.qualification_interest || existing?.qualification || 'Eletricidade Industrial') as Qualification,
-              is_online: Boolean(u.is_online),
+        profData.forEach((p: any) => {
+          const pts = p.points !== undefined ? Number(p.points) : (p.pontos !== undefined ? Number(p.pontos) : Number(p.total_points) || 0);
+          const existing = userMap.get(p.id);
+          if (!existing || pts > existing.points) {
+            userMap.set(p.id, {
+              id: p.id,
+              name: p.nome_completo || p.name || existing?.name || 'Jogador',
+              avatar: p.avatar || existing?.avatar || '👨‍🎓',
+              points: pts,
+              best_streak: Number(p.best_streak) || existing?.best_streak || 0,
+              total_answered: Number(p.total_answered) || existing?.total_answered || 0,
+              total_correct: Number(p.total_correct) || existing?.total_correct || 0,
+              qualification: (p.qualificacao || p.qualification_interest || existing?.qualification || 'Eletricidade Industrial') as Qualification,
+              is_online: Boolean(p.is_online),
             });
           }
         });
       }
     } catch (err) {
-      console.warn('users query error:', err);
+      console.warn('profiles query error:', err);
     }
 
     // 3. Query server /api/users/all-registered fallback
@@ -853,7 +881,7 @@ export const SupabaseDB = {
                   id: u.id,
                   name: u.name,
                   avatar: u.avatar || '👨‍🎓',
-                  points: Number(u.total_points) || 0,
+                  points: Number(u.total_points || u.points || 0),
                   best_streak: Number(u.best_streak) || 0,
                   total_answered: Number(u.total_answered) || 0,
                   total_correct: Number(u.total_correct) || 0,
@@ -880,7 +908,7 @@ export const SupabaseDB = {
               id: parsed.id,
               name: parsed.name,
               avatar: parsed.avatar || '👨‍🎓',
-              points: typeof parsed.total_points === 'number' ? parsed.total_points : (existing?.points || 0),
+              points: typeof parsed.total_points === 'number' ? parsed.total_points : (typeof parsed.points === 'number' ? parsed.points : (existing?.points || 0)),
               best_streak: parsed.best_streak || existing?.best_streak || 0,
               total_answered: parsed.total_answered || existing?.total_answered || 0,
               total_correct: parsed.total_correct || existing?.total_correct || 0,
@@ -904,7 +932,7 @@ export const SupabaseDB = {
       ];
     }
 
-    // Sort descending by points
+    // Sort descending by points (allowing negative points)
     allUsers.sort((a, b) => b.points - a.points);
 
     return allUsers.map((u, idx) => {

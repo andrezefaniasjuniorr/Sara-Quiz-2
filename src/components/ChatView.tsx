@@ -159,6 +159,19 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
         (payload) => {
           const newRow = payload.new as any;
           if (newRow && !newRow.is_private) {
+            let parsedReply = undefined;
+            if (newRow.reply_to) {
+              try {
+                parsedReply = typeof newRow.reply_to === 'string' ? JSON.parse(newRow.reply_to) : newRow.reply_to;
+              } catch {}
+            } else if (newRow.reply_to_user_name) {
+              parsedReply = {
+                id: newRow.reply_to_id || '',
+                user_name: newRow.reply_to_user_name,
+                message: newRow.reply_to_message || '',
+              };
+            }
+
             setGlobalMessages((prev) => {
               if (prev.some((m) => m.id === newRow.id)) return prev;
               return [
@@ -167,10 +180,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ user }) => {
                   id: newRow.id,
                   user_id: newRow.user_id || newRow.sender_id,
                   user_name: newRow.user_name || newRow.sender_name || 'Jogador',
-                  user_avatar: newRow.user_avatar || newRow.sender_avatar || '🧑‍🎓',
+                  user_avatar: newRow.user_avatar || newRow.sender_avatar || '👨‍🎓',
                   user_qualification: (newRow.user_qualification || 'Eletricidade Industrial') as Qualification,
                   message: newRow.content || newRow.message || '',
                   created_at: newRow.created_at || newRow.timestamp || new Date().toISOString(),
+                  reported: Boolean(newRow.reported),
+                  report_count: Number(newRow.report_count) || 0,
+                  reply_to: parsedReply,
                 },
               ];
             });
