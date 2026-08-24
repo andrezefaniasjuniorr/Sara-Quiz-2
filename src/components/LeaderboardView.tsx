@@ -22,10 +22,46 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
   const fetchLeaderboard = async (showLoadingSpinner = true) => {
     if (showLoadingSpinner) setLoading(true);
     try {
-      const data = await SupabaseDB.getRankings(selectedFilter);
-      setLeaderboard(data || []);
+      // 1. Direct Supabase query on 'users' table ordered by points descending (no local storage filtering)
+      let query = supabase
+        .from('users')
+        .select('*')
+        .order('points', { ascending: false });
+
+      if (selectedFilter !== 'Global') {
+        query = query.or(`qualification.eq.${selectedFilter},qualification_interest.eq.${selectedFilter}`);
+      }
+
+      const { data: rankingGlobal, error } = await query;
+
+      if (!error && rankingGlobal && rankingGlobal.length > 0) {
+        const formatted: LeaderboardEntry[] = rankingGlobal.map((u: any, idx: number) => {
+          const pts = u.points !== undefined ? Number(u.points) : (u.total_points !== undefined ? Number(u.total_points) : Number(u.pontos) || 0);
+          const ans = Number(u.total_answered) || 0;
+          const cor = Number(u.total_correct) || 0;
+          return {
+            position: idx + 1,
+            user_id: u.id,
+            name: u.name || u.nome_completo || 'Jogador',
+            avatar: u.avatar || '👨‍🎓',
+            points: pts,
+            streak: Number(u.best_streak) || 0,
+            accuracy_pct: ans > 0 ? Math.round((cor / ans) * 100) : 0,
+            top_qualification: (u.qualification || u.qualification_interest || u.qualificacao || 'Eletricidade Industrial') as Qualification,
+            is_online: Boolean(u.is_online),
+          };
+        });
+        // Replace frontend ranking state with rankingGlobal result
+        setLeaderboard(formatted);
+      } else {
+        // Fallback with SupabaseDB multi-table adapter
+        const data = await SupabaseDB.getRankings(selectedFilter);
+        setLeaderboard(data || []);
+      }
     } catch (err) {
       console.error('Error fetching leaderboard from Supabase:', err);
+      const data = await SupabaseDB.getRankings(selectedFilter);
+      setLeaderboard(data || []);
     } finally {
       if (showLoadingSpinner) setLoading(false);
     }
